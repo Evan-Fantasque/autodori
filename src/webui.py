@@ -1,14 +1,14 @@
-import base64
-import io
 import logging
 import queue
+import socket
 import sys
 import threading
 import time
+import webbrowser
 from logging.handlers import QueueHandler
+from threading import Timer
 
 from flask import Flask, jsonify, render_template, request, Response
-from PIL import Image
 
 # 导入改造后的主模块
 import autodori_master
@@ -17,7 +17,6 @@ import autodori_master
 app = Flask(__name__, template_folder="../templates")
 log_queue = queue.Queue()
 autodori_thread = None
-autodori_instance = None
 current_status = "idle"  # idle, running, stopping, stopped, error
 
 # ---- 日志配置 ----
@@ -34,27 +33,25 @@ logging.getLogger().setLevel(logging.INFO)
 
 def run_autodori_task(config):
     """在单独的线程中运行 Autodori 任务"""
-    global autodori_instance, current_status
+    global current_status
     try:
         current_status = "running"
-        autodori_instance = autodori_master.AutoDoriMaster(log_queue)
-        autodori_instance.initialize()
-        autodori_instance.run(
+        # 直接调用重构后的 main 函数
+        autodori_master.main(
             difficulty=config["difficulty"],
             livemode=config["livemode"],
-            min_liveboost=config["liveboost"],
+            min_liveboost=int(config["liveboost"]),
         )
-        # 正常结束
         if current_status != "stopping":
             current_status = "stopped"
+    except SystemExit:
+        # autodori_master.main() 在结束时会调用 sys.exit()，这会触发 SystemExit 异常
+        # 这是正常的任务结束流程，我们捕获它以正确更新状态
+        logging.info("Autodori 任务已正常结束。")
+        current_status = "stopped"
     except Exception as e:
         logging.error(f"Autodori 任务发生致命错误: {e}", exc_info=True)
         current_status = "error"
-    finally:
-        # 确保任务结束后，实例被清理
-        if autodori_instance:
-            autodori_instance.cleanup()
-            autodori_instance = None
 
 
 # ---- Flask 路由 ----
@@ -83,14 +80,15 @@ def start_task():
 @app.route("/stop", methods=["POST"])
 def stop_task():
     """停止自动化任务"""
-    global current_status, autodori_instance
+    global current_status
     if not autodori_thread or not autodori_thread.is_alive():
         return jsonify({"status": "error", "message": "当前没有正在运行的任务。"})
 
     logging.info("收到停止请求...")
     current_status = "stopping"
-    if autodori_instance:
-        autodori_instance.stop()  # 尝试优雅停止
+    # 直接通过模块访问 maatasker 来停止任务
+    if hasattr(autodori_master, 'maatasker'):
+        autodori_master.maatasker.stop()
 
     return jsonify({"status": "success", "message": "正在停止任务..."})
 
@@ -106,19 +104,6 @@ def status():
         status_to_report = current_status
 
     return jsonify({"status": status_to_report, "is_alive": is_alive})
-
-
-@app.route("/debug/images")
-def get_debug_images():
-    """获取用于调试的截图"""
-    if autodori_instance:
-        full_b64 = autodori_instance.last_full_screenshot_b64
-        roi_b64 = autodori_instance.last_roi_screenshot_b64
-        return jsonify({
-            "full": full_b64,
-            "roi": roi_b64
-        })
-    return jsonify({"error": "任务未运行或未进入识别阶段", "full": None, "roi": None})
 
 
 @app.route("/stream")
@@ -139,7 +124,28 @@ def stream():
     return Response(event_stream(), mimetype="text/event-stream")
 
 
+def find_free_port(start_port=5000):
+    """查找一个空闲的端口"""
+    port = start_port
+    while port < 65535:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                port += 1
+    raise IOError("在 5000-65535 范围内未找到可用端口")
+
+
 if __name__ == "__main__":
-    print("WebUI 已启动，请在浏览器中打开 http://127.0.0.1:5000")
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    host = "127.0.0.1"
+    port = find_free_port(5000)
+    url = f"http://{host}:{port}"
+
+    print(f"WebUI 已启动，请在浏览器中打开 {url}")
+
+    # 使用计时器延迟打开浏览器，确保 Flask 服务已启动
+    Timer(1, lambda: webbrowser.open_new_tab(url)).start()
+
+    app.run(host=host, port=port, debug=False)
 

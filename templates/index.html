@@ -3,212 +3,242 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AutoDori 控制面板</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>AutoDori WebUI</title>
     <style>
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
         }
-        #log-container {
-            height: calc(100vh - 12rem);
+        .container {
+            max-width: 800px;
+            width: 100%;
         }
-        .status-dot {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            display: inline-block;
-            margin-right: 8px;
-            transition: background-color 0.3s;
+        h1, h2 {
+            text-align: center;
+            color: #d1a1e4;
         }
-        .status-idle { background-color: #6b7280; }
-        .status-running { background-color: #22c55e; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-        .status-stopping { background-color: #f59e0b; }
-        .status-stopped, .status-error { background-color: #ef4444; }
-
-        @keyframes pulse {
-            50% { opacity: .5; }
+        .control-panel, .log-panel {
+            background-color: #252526;
+            border: 1px solid #37373d;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
         }
+        .form-group {
+            margin-bottom: 15px;
+            display: flex;
+            flex-direction: column;
+        }
+        .form-group label {
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .form-group select, .form-group input {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #37373d;
+            background-color: #3c3c3c;
+            color: #d4d4d4;
+        }
+        .button-group {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        .btn-start {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .btn-start:hover:not(:disabled) {
+            background-color: #45a049;
+        }
+        .btn-stop {
+            background-color: #f44336;
+            color: white;
+        }
+        .btn-stop:hover:not(:disabled) {
+            background-color: #da190b;
+        }
+        .btn:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+        }
+        #log-output {
+            height: 400px;
+            background-color: #1e1e1e;
+            border: 1px solid #37373d;
+            border-radius: 4px;
+            padding: 10px;
+            overflow-y: scroll;
+            white-space: pre-wrap;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            color: #ce9178;
+        }
+        #status-indicator {
+            text-align: center;
+            font-size: 1.2em;
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .status-idle { background-color: #555; color: white; }
+        .status-running { background-color: #3a8dff; color: white; }
+        .status-stopping { background-color: #f5b041; color: black; }
+        .status-stopped { background-color: #4CAF50; color: white; }
+        .status-error { background-color: #f44336; color: white; }
     </style>
 </head>
-<body class="bg-gray-900 text-gray-200">
-    <div class="container mx-auto p-4 md:p-8">
-        <header class="flex justify-between items-center mb-6">
-            <div>
-                <h1 class="text-3xl font-bold text-white">AutoDori 控制面板</h1>
-                <p class="text-gray-400">一个用于 BangDream! 的自动化工具 WebUI</p>
-            </div>
-            <div id="status-indicator" class="flex items-center text-white text-lg font-semibold bg-gray-800 px-4 py-2 rounded-lg">
-                <span id="status-dot" class="status-dot status-idle"></span>
-                <span id="status-text">空闲</span>
-            </div>
-        </header>
+<body>
+    <div class="container">
+        <h1>AutoDori WebUI</h1>
 
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <!-- 控制区域 -->
-            <div class="md:col-span-1 bg-gray-800 p-6 rounded-lg shadow-lg">
-                <h2 class="text-xl font-semibold mb-4 text-white border-b border-gray-700 pb-2">任务配置</h2>
-                <form id="config-form">
-                    <div class="space-y-4">
-                        <div>
-                            <label for="difficulty" class="block text-sm font-medium text-gray-300">歌曲难度</label>
-                            <select id="difficulty" name="difficulty" class="mt-1 block w-full bg-gray-700 border-gray-600 text-white rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2">
-                                <option value="easy">Easy</option>
-                                <option value="normal">Normal</option>
-                                <option value="hard" selected>Hard</option>
-                                <option value="expert">Expert</option>
-                                <option value="special">Special</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label for="livemode" class="block text-sm font-medium text-gray-300">演出模式</label>
-                            <select id="livemode" name="livemode" class="mt-1 block w-full bg-gray-700 border-gray-600 text-white rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2">
-                                <option value="freelive" selected>自由演出</option>
-                                <option value="challengelive">挑战演出</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label for="liveboost" class="block text-sm font-medium text-gray-300">最低火种 (Live Boost)</label>
-                            <input type="number" name="liveboost" id="liveboost" value="1" min="0" max="10" class="mt-1 block w-full bg-gray-700 border-gray-600 text-white rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2">
-                        </div>
-                    </div>
-                    <div class="mt-6 flex space-x-3">
-                        <button type="button" id="start-btn" class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 focus:ring-offset-gray-800 transition">
-                            启动任务
-                        </button>
-                        <button type="button" id="stop-btn" class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 focus:ring-offset-gray-800 transition" disabled>
-                            停止任务
-                        </button>
-                    </div>
-                </form>
+        <div class="control-panel">
+            <h2>控制面板</h2>
+            <div id="status-indicator" class="status-idle">状态: 空闲</div>
+            <div class="form-group">
+                <label for="difficulty">难度 (Difficulty)</label>
+                <select id="difficulty">
+                    <option value="easy">Easy</option>
+                    <option value="normal">Normal</option>
+                    <option value="hard" selected>Hard</option>
+                    <option value="expert">Expert</option>
+                    <option value="special">Special</option>
+                </select>
             </div>
+            <div class="form-group">
+                <label for="livemode">演出模式 (Live Mode)</label>
+                <select id="livemode">
+                    <option value="freelive" selected>自由演出 (Free Live)</option>
+                    <option value="challengelive">挑战演出 (Challenge Live)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="liveboost">最低火量 (Min Live Boost)</label>
+                <input type="number" id="liveboost" value="1" min="0">
+            </div>
+            <div class="button-group">
+                <button id="start-btn" class="btn btn-start">开始任务</button>
+                <button id="stop-btn" class="btn btn-stop" disabled>停止任务</button>
+            </div>
+        </div>
 
-            <!-- 日志区域 -->
-            <div class="md:col-span-2 bg-gray-800 p-6 rounded-lg shadow-lg">
-                 <h2 class="text-xl font-semibold mb-4 text-white border-b border-gray-700 pb-2">实时日志</h2>
-                <div id="log-container" class="bg-black p-4 rounded-md overflow-y-auto">
-                    <pre><code id="log-output" class="text-sm text-gray-300"></code></pre>
-                </div>
-            </div>
+        <div class="log-panel">
+            <h2>日志输出</h2>
+            <div id="log-output"></div>
         </div>
     </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const startBtn = document.getElementById('start-btn');
-            const stopBtn = document.getElementById('stop-btn');
-            const logOutput = document.getElementById('log-output');
-            const logContainer = document.getElementById('log-container');
-            const statusDot = document.getElementById('status-dot');
-            const statusText = document.getElementById('status-text');
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const logOutput = document.getElementById('log-output');
+        const statusIndicator = document.getElementById('status-indicator');
+        const configElements = ['difficulty', 'livemode', 'liveboost'];
 
-            const statusMap = {
-                idle: { text: '空闲', color: 'idle' },
-                running: { text: '运行中', color: 'running' },
-                stopping: { text: '正在停止', color: 'stopping' },
-                stopped: { text: '已停止', color: 'stopped' },
-                error: { text: '错误', color: 'error' }
+        let eventSource;
+
+        function connectToLogStream() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            eventSource = new EventSource('/stream');
+            eventSource.onmessage = function(event) {
+                if (event.data.startsWith(': heartbeat')) return;
+                logOutput.textContent += event.data + '\n';
+                logOutput.scrollTop = logOutput.scrollHeight;
+            };
+            eventSource.onerror = function(err) {
+                logOutput.textContent += '日志流连接错误，将在3秒后重试...\n';
+                eventSource.close();
+                setTimeout(connectToLogStream, 3000);
+            };
+        }
+
+        function setControlsState(running) {
+            startBtn.disabled = running;
+            stopBtn.disabled = !running;
+            configElements.forEach(id => {
+                document.getElementById(id).disabled = running;
+            });
+        }
+
+        function updateStatusIndicator(status) {
+            let statusText = '未知';
+            switch (status) {
+                case 'idle': statusText = '空闲'; break;
+                case 'running': statusText = '运行中'; break;
+                case 'stopping': statusText = '正在停止'; break;
+                case 'stopped': statusText = '已停止'; break;
+                case 'error': statusText = '错误'; break;
+            }
+            statusIndicator.textContent = `状态: ${statusText}`;
+            statusIndicator.className = `status-${status}`;
+        }
+
+        startBtn.addEventListener('click', () => {
+            const config = {
+                difficulty: document.getElementById('difficulty').value,
+                livemode: document.getElementById('livemode').value,
+                liveboost: document.getElementById('liveboost').value,
             };
 
-            function updateUIForStatus(status) {
-                const { text, color } = statusMap[status] || statusMap.idle;
-                statusText.textContent = text;
-                statusDot.className = `status-dot status-${color}`;
-
-                if (status === 'running' || status === 'stopping') {
-                    startBtn.disabled = true;
-                    stopBtn.disabled = status === 'stopping';
+            fetch('/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(config)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    logOutput.textContent = '任务启动...\n';
                 } else {
-                    startBtn.disabled = false;
-                    stopBtn.disabled = true;
-                }
-            }
-
-            function appendLog(message) {
-                const isScrolledToBottom = logContainer.scrollHeight - logContainer.clientHeight <= logContainer.scrollTop + 1;
-                const timestamp = new Date().toLocaleTimeString();
-
-                // 清理 ANSI 转义字符
-                const cleanMessage = message.replace(/\[\d{1,2}m/g, '');
-
-                logOutput.textContent += cleanMessage + '\n';
-
-                if (isScrolledToBottom) {
-                    logContainer.scrollTop = logContainer.scrollHeight;
-                }
-            }
-
-            // 启动 SSE 连接
-            function setupLogStream() {
-                const eventSource = new EventSource('/stream');
-
-                eventSource.onopen = () => {
-                    appendLog('[WebUI] 已连接到日志流。');
-                };
-
-                eventSource.onmessage = (event) => {
-                    appendLog(event.data);
-                };
-
-                eventSource.onerror = () => {
-                    appendLog('[WebUI] 日志流连接断开，尝试重连...');
-                    eventSource.close();
-                    setTimeout(setupLogStream, 3000);
-                };
-            }
-
-            // 轮询状态
-            async function pollStatus() {
-                try {
-                    const response = await fetch('/status');
-                    const data = await response.json();
-                    updateUIForStatus(data.status);
-                } catch (error) {
-                    console.error('获取状态失败:', error);
-                    updateUIForStatus('error');
-                }
-            }
-
-            startBtn.addEventListener('click', async () => {
-                const config = {
-                    difficulty: document.getElementById('difficulty').value,
-                    livemode: document.getElementById('livemode').value,
-                    liveboost: parseInt(document.getElementById('liveboost').value, 10),
-                };
-
-                appendLog(`[WebUI] 正在启动任务，配置: ${JSON.stringify(config)}`);
-                updateUIForStatus('running');
-
-                try {
-                    const response = await fetch('/start', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(config)
-                    });
-                    const data = await response.json();
-                    appendLog(`[WebUI] 后端响应: ${data.message}`);
-                } catch (error) {
-                    appendLog(`[WebUI] 启动失败: ${error}`);
-                    updateUIForStatus('error');
+                    logOutput.textContent += `启动失败: ${data.message}\n`;
                 }
             });
+        });
 
-            stopBtn.addEventListener('click', async () => {
-                appendLog('[WebUI] 正在发送停止信号...');
-                updateUIForStatus('stopping');
-                try {
-                    const response = await fetch('/stop', { method: 'POST' });
-                    const data = await response.json();
-                    appendLog(`[WebUI] 后端响应: ${data.message}`);
-                } catch (error) {
-                    appendLog(`[WebUI] 停止请求失败: ${error}`);
-                    updateUIForStatus('error');
+        stopBtn.addEventListener('click', () => {
+            fetch('/stop', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    logOutput.textContent += '正在发送停止信号...\n';
+                } else {
+                    logOutput.textContent += `停止失败: ${data.message}\n`;
                 }
             });
+        });
 
-            // 初始化
-            setInterval(pollStatus, 2000);
-            pollStatus();
-            setupLogStream();
+        setInterval(() => {
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    const isRunning = data.is_alive;
+                    setControlsState(isRunning);
+                    updateStatusIndicator(data.status);
+                });
+        }, 1000);
+
+        // Initial state setup
+        connectToLogStream();
+        fetch('/status').then(r => r.json()).then(data => {
+             setControlsState(data.is_alive);
+             updateStatusIndicator(data.status);
         });
     </script>
 </body>
