@@ -369,8 +369,12 @@ class UISongRecognition(CustomRecognition):
         best_match = max(results, key=lambda x: x[1])
 
         if best_match and best_match[1] > 50:
-            logging.info(f"歌曲识别成功: '{best_match[0]}' (最高置信度: {best_match[1]}%)")
-            return self.AnalyzeResult(roi, best_match[0])
+            if IS_FULL_SONG:
+                logging.info(f"歌曲识别成功: '[FULL] {best_match[0]}' (最高置信度: {best_match[1]}%)")
+                return self.AnalyzeResult(roi, "[FULL] "+best_match[0])
+            else:
+                logging.info(f"歌曲识别成功: '{best_match[0]}' (最高置信度: {best_match[1]}%)")
+                return self.AnalyzeResult(roi, best_match[0])
         else:
             logging.warning(f"UI 流程歌曲识别失败：最高匹配度未超过 50% ({best_match})。")
             return self.AnalyzeResult(None, "")
