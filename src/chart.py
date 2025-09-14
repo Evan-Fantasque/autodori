@@ -338,6 +338,15 @@ class Chart:
                 logging.warning(f"notes_to_actions: Unknown type: {note_type}")
 
         actions.sort(key=lambda x: x["time"])
+
+        if actions:
+            # 获取最后一个操作的时间戳
+            last_action_time = actions[-1]["time"]
+            # 将所有在最后一个时间戳及之后发生的操作都延迟30ms
+            for action in actions:
+                if action["time"] >= last_action_time:
+                    action["time"] += 100
+
         actions: list[dict]
 
         actions_with_wait: list[dict] = []

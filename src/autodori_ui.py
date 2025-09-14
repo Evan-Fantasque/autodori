@@ -76,6 +76,8 @@ cmd_log_list_lock = threading.Lock()
 # --- Real-time Streaming Components ---
 streaming_thread: Optional[threading.Thread] = None
 streaming_active = threading.Event()
+STREAM_SETTINGS = {"fps": 1, "resolution": 480}
+stream_settings_lock = threading.Lock()
 
 
 def reset_callback_data():
@@ -431,6 +433,10 @@ def _stream_loop(socketio):
                 time.sleep(1)
                 continue
 
+            with stream_settings_lock:
+                current_fps = STREAM_SETTINGS["fps"]
+                current_res_width = STREAM_SETTINGS["resolution"]
+
             # 1. Capture screen using the player's method, which is known to be reliable.
             img_bgr = current_player.ipc_capture_display()
 
@@ -442,23 +448,34 @@ def _stream_loop(socketio):
             # 2. Convert from BGR to RGB for correct web display.
             img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
-            # 3. Resize to a thumbnail
-            thumbnail_height = int(img_rgb.shape[0] * (480 / img_rgb.shape[1]))
-            thumbnail = cv2.resize(img_rgb, (480, thumbnail_height))
+            # 3. Resize to a thumbnail based on settings
+            original_h, original_w = img_rgb.shape[:2]
+            aspect_ratio = original_h / original_w
+            thumbnail_height = int(current_res_width * aspect_ratio)
+            thumbnail = cv2.resize(img_rgb, (current_res_width, thumbnail_height))
 
             # 4. Encode to JPEG and then Base64
-            _, buffer = cv2.imencode(".jpg", thumbnail)
+            _, buffer = cv2.imencode(".jpg", thumbnail, [cv2.IMWRITE_JPEG_QUALITY, 80])
             img_base64 = base64.b64encode(buffer).decode("utf-8")
 
             # 5. Emit to the client
             socketio.emit("update_frame", {"image": img_base64})
 
-            # 6. Control frame rate (1 FPS)
-            time.sleep(1)
+            # 6. Control frame rate
+            sleep_duration = 1 / current_fps
+            time.sleep(sleep_duration)
 
         except Exception as e:
             logging.error(f"画面传输线程出错: {e}")
             time.sleep(1)
+
+
+def update_stream_settings(settings):
+    """Safely updates the global stream settings."""
+    global STREAM_SETTINGS
+    with stream_settings_lock:
+        STREAM_SETTINGS["fps"] = int(settings.get("fps", 1))
+        STREAM_SETTINGS["resolution"] = int(settings.get("resolution", 480))
 
 
 def start_streaming(socketio):
@@ -523,8 +540,14 @@ def run_simplified_autodori(config_data):
             "on_error": ["stop"],
             "recognition": "TemplateMatch",
             "template": "live/button/live_medley.png",
-            "timeout": 15000,
+            "timeout": 7500,
             "threshold": 0.5,
+        },
+        "wait_live_start": {
+            "recognition": "TemplateMatch",
+            "template": "live/button/pause.png",
+            "next": "playsong",
+            "threshold": 0.7,
         },
         "playsong": {
             "action": "Custom",

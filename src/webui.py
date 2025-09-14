@@ -31,14 +31,18 @@ class SocketIOHandler(logging.Handler):
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-formatter = logging.Formatter("[%(asctime)s][%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+# Keep this formatter for the console output
+console_formatter = logging.Formatter("[%(asctime)s][%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+
+# Use a simplified formatter for SocketIO to avoid duplicate timestamps on the frontend
+socketio_formatter = logging.Formatter("[%(levelname)s] %(message)s")
 
 socketio_handler = SocketIOHandler()
-socketio_handler.setFormatter(formatter)
+socketio_handler.setFormatter(socketio_formatter)
 logger.addHandler(socketio_handler)
 
 console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setFormatter(formatter)
+console_handler.setFormatter(console_formatter)
 logger.addHandler(console_handler)
 
 # --- Global State ---
@@ -93,7 +97,7 @@ def handle_run_task(data):
         try:
             config = {
                 "difficulty": data.get("difficulty", "hard"),
-                "is_full_song": data.get("is_full_song", False)  # Pass the new parameter
+                "is_full_song": data.get("is_full_song", False)
             }
             autodori_ui.run_simplified_autodori(config)
         except Exception as e:
@@ -106,8 +110,10 @@ def handle_run_task(data):
 
 
 @socketio.on("start_stream")
-def handle_start_stream():
+def handle_start_stream(settings=None):
     try:
+        if settings:
+            autodori_ui.update_stream_settings(settings)
         autodori_ui.start_streaming(socketio)
         logging.info("已开启实时画面传输。")
     except Exception as e:
@@ -118,6 +124,16 @@ def handle_start_stream():
 def handle_stop_stream():
     autodori_ui.stop_streaming()
     logging.info("已停止实时画面传输。")
+
+
+@socketio.on("update_stream_settings")
+def handle_update_stream_settings(settings):
+    """Handle stream settings update from client."""
+    try:
+        autodori_ui.update_stream_settings(settings)
+        logging.info(f"画面传输设置已更新: {settings}")
+    except Exception as e:
+        logging.error(f"更新画面传输设置失败: {e}")
 
 
 # --- Main Execution ---
@@ -138,4 +154,3 @@ if __name__ == "__main__":
     threading.Timer(1, lambda: webbrowser.open_new_tab(url)).start()
 
     socketio.run(app, host="127.0.0.1", port=port, allow_unsafe_werkzeug=True)
-

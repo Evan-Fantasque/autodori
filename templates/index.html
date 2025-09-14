@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AutoDori WebUI</title>
+    <title>autodori WebUI</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <style>
@@ -14,7 +14,7 @@
 
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-        /* Custom scrollbar for a cleaner look */
+        /* Custom scrollbar */
         ::-webkit-scrollbar {
             width: 8px;
         }
@@ -32,12 +32,11 @@
             background: #6b7280; /* bg-gray-500 */
         }
 
-        /* Style for the log container to make it feel like a terminal */
         #log-container {
             font-family: 'Courier New', Courier, monospace;
         }
 
-        /* Custom styles for the toggle switch */
+        /* Toggle switch styles */
         .dot {
             transform: translateX(0);
             transition: transform 0.2s ease-in-out;
@@ -50,24 +49,82 @@
         input:checked + .toggle-bg {
             background-color: #3b82f6; /* bg-blue-500 */
         }
+
+        /* Header visibility transition */
+        #main-header {
+            transition: transform 0.3s ease-in-out;
+        }
+
+        .header-hidden {
+            transform: translateY(-100%);
+        }
+
+
+        /* --- Vertical mode styles based on aspect ratio --- */
+        @media (max-aspect-ratio: 1/1) {
+            /* Hide only the video stream, placeholder, and settings button */
+            #video-stream, #stream-placeholder, #settings-button {
+                display: none;
+            }
+
+            /* Change main layout to a vertical column */
+            .main-layout {
+                flex-direction: column;
+                height: calc(100vh - 100px);
+            }
+
+            /* The video-container now only holds the control panel. Reset its styles. */
+            #video-container {
+                width: 100%;
+                height: auto; /* Let it size to its content */
+                position: static;
+                background: transparent;
+                border: none;
+                box-shadow: none;
+                overflow: visible;
+                /* Ensure it doesn't take up flex space */
+                flex-grow: 0;
+                flex-shrink: 0;
+            }
+
+            /* Make the control panel a static, full-width block */
+            .control-panel {
+                position: static;
+                width: 100%;
+                max-width: none;
+                /* Adopt styles from the log box for consistency */
+                background-color: #1f2937; /* bg-gray-800 */
+                border: 1px solid #374151; /* border-gray-700 */
+                border-radius: 0.5rem;
+                box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+                backdrop-filter: none;
+                margin-bottom: 1.5rem; /* Add gap between controls and logs */
+            }
+
+            /* Ensure the log area takes up the remaining space */
+            .log-area-container {
+                width: 100%;
+                height: 100%;
+            }
+        }
     </style>
 </head>
 <body class="text-gray-200">
 
 <div class="min-h-screen flex flex-col">
-    <header class="bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 sticky top-0 z-20">
+    <header id="main-header" class="bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 sticky top-0 z-30">
         <div class="container mx-auto px-4 md:px-8 py-4">
-            <h1 class="text-2xl font-bold text-white">AutoDori WebUI</h1>
+            <h1 class="text-2xl font-bold text-white">autodori WebUI</h1>
             <p class="text-sm text-gray-400">自动化演奏控制面板</p>
         </div>
     </header>
 
-    <main class="flex-grow container mx-auto p-4 md:px-8 md:py-6">
-        <div class="flex flex-col lg:flex-row gap-6 h-full" style="height: calc(100vh - 120px);">
+    <main class="flex-grow container mx-auto p-4 md:px-8 md:py-6 relative">
+        <div id="header-sentinel" class="absolute top-0 h-1"></div>
+        <div class="main-layout flex flex-col lg:flex-row gap-6 h-full" style="height: calc(100vh - 120px);">
 
-            <!-- Main Content Area: Video feed and floating controls -->
-            <div
-                class="w-full lg:w-2/3 h-full relative flex items-center justify-center bg-black rounded-lg overflow-hidden border border-gray-700 shadow-lg">
+            <div id="video-container"
+                 class="w-full lg:w-2/3 h-full relative flex items-center justify-center bg-black rounded-lg overflow-hidden border border-gray-700 shadow-lg">
                 <img id="video-stream" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
                      alt="Live Stream" class="max-h-full max-w-full object-contain">
                 <div
@@ -75,9 +132,8 @@
                     <p id="stream-placeholder" class="text-gray-500">画面传输已关闭</p>
                 </div>
 
-                <!-- Floating Control Panel -->
                 <div
-                    class="absolute top-4 left-4 w-auto max-w-xs p-4 bg-gray-900/70 backdrop-blur-md rounded-lg border border-gray-700/50 shadow-2xl">
+                    class="control-panel absolute top-4 left-4 w-auto max-w-xs p-4 bg-gray-900/70 backdrop-blur-md rounded-lg border border-gray-700/50 shadow-2xl z-40">
                     <div class="flex items-center justify-between mb-3">
                         <h2 class="text-lg font-semibold text-white">控制面板</h2>
                         <div class="flex items-center space-x-2">
@@ -87,13 +143,11 @@
                     </div>
 
                     <div class="space-y-4">
-                        <!-- Initialization -->
                         <button id="init-button"
                                 class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition-colors duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed">
-                            Initialize AutoDori
+                            Initialize autodori
                         </button>
 
-                        <!-- Simplified Auto Play -->
                         <div>
                             <label for="difficulty-select"
                                    class="block mb-2 text-sm font-medium text-gray-300">选择难度</label>
@@ -107,7 +161,6 @@
                             </select>
                         </div>
 
-                        <!-- FULL Song Toggle -->
                         <div>
                             <label for="full-song-toggle" class="flex items-center cursor-pointer">
                                 <div class="relative">
@@ -128,7 +181,6 @@
                             Start Auto Play
                         </button>
 
-                        <!-- Stream Toggle -->
                         <div>
                             <label for="stream-toggle" class="flex items-center cursor-pointer">
                                 <div class="relative">
@@ -144,15 +196,25 @@
                         </div>
                     </div>
                 </div>
+
+                <button id="settings-button"
+                        class="absolute top-4 right-4 p-2 bg-gray-900/70 backdrop-blur-md rounded-full hover:bg-gray-800/80 transition-colors z-40">
+                    <svg class="w-6 h-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                         xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                    </svg>
+                </button>
             </div>
 
-            <!-- Log Area -->
-            <div class="w-full lg:w-1/3 h-full flex flex-col bg-gray-900 rounded-lg border border-gray-700 shadow-lg">
+            <div
+                class="log-area-container w-full lg:w-1/3 h-full flex flex-col bg-gray-900 rounded-lg border border-gray-700 shadow-lg">
                 <div class="px-4 py-3 border-b border-gray-700">
                     <h2 class="text-lg font-semibold text-white">日志输出</h2>
                 </div>
                 <div id="log-container" class="p-4 flex-grow overflow-y-auto text-sm">
-                    <!-- Logs will be appended here -->
                 </div>
                 <div class="px-4 py-2 border-t border-gray-700">
                     <button id="clear-log-button" class="text-xs text-gray-400 hover:text-white transition-colors">
@@ -163,6 +225,45 @@
         </div>
     </main>
 </div>
+
+<div id="settings-modal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 hidden">
+    <div class="bg-gray-800 rounded-lg shadow-2xl p-6 w-full max-w-md border border-gray-700">
+        <h2 class="text-xl font-bold text-white mb-4">画面传输设置</h2>
+        <div class="space-y-4">
+            <div>
+                <label for="fps-select" class="block mb-2 text-sm font-medium text-gray-300">帧率 (FPS)</label>
+                <select id="fps-select"
+                        class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
+                    <option value="1">1 FPS</option>
+                    <option value="5">5 FPS</option>
+                    <option value="10">10 FPS</option>
+                    <option value="15">15 FPS</option>
+                </select>
+            </div>
+            <div>
+                <label for="resolution-select" class="block mb-2 text-sm font-medium text-gray-300">分辨率
+                    (宽度)</label>
+                <select id="resolution-select"
+                        class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
+                    <option value="480">480p</option>
+                    <option value="640">640p</option>
+                    <option value="720">720p</option>
+                </select>
+            </div>
+        </div>
+        <div class="mt-6 flex justify-end space-x-3">
+            <button id="cancel-settings-button"
+                    class="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded-md text-white font-medium transition-colors">
+                取消
+            </button>
+            <button id="save-settings-button"
+                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md text-white font-medium transition-colors">
+                保存
+            </button>
+        </div>
+    </div>
+</div>
+
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -181,22 +282,58 @@
         const streamToggle = document.getElementById('stream-toggle');
         const streamPlaceholder = document.getElementById('stream-placeholder');
 
+        // Settings Modal Elements
+        const settingsButton = document.getElementById('settings-button');
+        const settingsModal = document.getElementById('settings-modal');
+        const saveSettingsButton = document.getElementById('save-settings-button');
+        const cancelSettingsButton = document.getElementById('cancel-settings-button');
+        const fpsSelect = document.getElementById('fps-select');
+        const resolutionSelect = document.getElementById('resolution-select');
+
+        // Header hiding logic
+        const mainHeader = document.getElementById('main-header');
+        const headerSentinel = document.getElementById('header-sentinel');
+
+
         let isInitialized = false;
+        // --- Stream Settings State ---
+        let streamSettings = {
+            fps: 1,
+            resolution: 480
+        };
 
         // --- UI Helper Functions ---
-        function addLog(message, level = 'INFO') {
+        function addLog(rawMessage, levelHint = null) {
             const logEntry = document.createElement('div');
             const timestamp = new Date().toLocaleTimeString();
 
+            let message = rawMessage;
+            let level = levelHint ? levelHint.toUpperCase() : 'INFO';
+
+            // Regex to parse backend log format: [LEVEL] Message
+            const logRegex = /^\[(.*?)\] (.*)$/s;
+            const match = rawMessage.match(logRegex);
+
+            if (match) {
+                level = match[1].toUpperCase();
+                message = match[2];
+
+                // Simplify specific INFO log messages
+                if (level === 'INFO' && message.startsWith('send operation')) {
+                    message = '发送操作';
+                }
+            }
+
             let colorClass = 'text-gray-400';
-            if (level === 'ERROR') colorClass = 'text-red-400';
-            if (level === 'WARNING') colorClass = 'text-yellow-400';
-            if (level === 'SUCCESS') colorClass = 'text-green-400';
+            if (level === 'ERROR' || message.includes('失败')) colorClass = 'text-red-400';
+            else if (level === 'WARNING') colorClass = 'text-yellow-400';
+            else if (level === 'SUCCESS' || message.includes('成功')) colorClass = 'text-green-400';
 
             logEntry.innerHTML = `<span class="text-gray-500 mr-2">[${timestamp}]</span><span class="${colorClass}">${message}</span>`;
             logContainer.appendChild(logEntry);
             logContainer.scrollTop = logContainer.scrollHeight;
         }
+
 
         function setStatus(initialized, running = false) {
             isInitialized = initialized;
@@ -222,7 +359,7 @@
 
         // --- Event Listeners ---
         initButton.addEventListener('click', () => {
-            addLog('正在初始化 AutoDori...', 'INFO');
+            addLog('正在初始化 autodori...', 'INFO');
             statusText.textContent = '初始化中...';
             setStatus(false, true); // Visually indicate "running"
             socket.emit('initialize');
@@ -245,10 +382,10 @@
 
         streamToggle.addEventListener('change', () => {
             if (streamToggle.checked) {
-                addLog('开启实时画面传输。', 'INFO');
+                addLog(`开启实时画面传输 (FPS: ${streamSettings.fps}, Res: ${streamSettings.resolution}p)。`, 'INFO');
                 streamPlaceholder.style.display = 'none';
                 videoStream.style.display = 'block';
-                socket.emit('start_stream');
+                socket.emit('start_stream', streamSettings); // Send current settings
             } else {
                 addLog('关闭实时画面传输。', 'INFO');
                 socket.emit('stop_stream');
@@ -258,25 +395,62 @@
             }
         });
 
+        // --- Settings Modal Listeners ---
+        settingsButton.addEventListener('click', () => {
+            // Load current settings into modal
+            fpsSelect.value = streamSettings.fps;
+            resolutionSelect.value = streamSettings.resolution;
+            settingsModal.classList.remove('hidden');
+        });
+
+        cancelSettingsButton.addEventListener('click', () => {
+            settingsModal.classList.add('hidden');
+        });
+
+        saveSettingsButton.addEventListener('click', () => {
+            // Update settings state
+            streamSettings.fps = parseInt(fpsSelect.value, 10);
+            streamSettings.resolution = parseInt(resolutionSelect.value, 10);
+            addLog(`画面传输设置已更新 (FPS: ${streamSettings.fps}, Res: ${streamSettings.resolution}p)。`, 'SUCCESS');
+
+            // If stream is active, send updated settings to backend
+            if (streamToggle.checked) {
+                socket.emit('update_stream_settings', streamSettings);
+            }
+
+            settingsModal.classList.add('hidden');
+        });
+
+        // --- Header Intersection Observer ---
+        const observer = new IntersectionObserver(
+            ([entry]) => {
+                // If the sentinel is not intersecting (i.e., it's scrolled up under the header)
+                // then hide the header. Otherwise, show it.
+                mainHeader.classList.toggle('header-hidden', !entry.isIntersecting);
+            },
+            {
+                rootMargin: '0px',
+                threshold: 1.0,
+            }
+        );
+
+        if (headerSentinel) {
+            observer.observe(headerSentinel);
+        }
+
+
         // --- Socket.IO Event Handlers ---
         socket.on('connect', () => {
             addLog('已连接到后端服务器。', 'SUCCESS');
-            setStatus(false);
         });
 
         socket.on('disconnect', () => {
             addLog('与后端服务器断开连接。', 'ERROR');
-            setStatus(false);
         });
 
         socket.on('log', (data) => {
             if (typeof data === 'object' && data !== null && data.data != null) {
-                const message = data.data;
-                let level = 'INFO';
-                if (message.includes('ERROR') || message.includes('失败')) level = 'ERROR';
-                if (message.includes('WARNING')) level = 'WARNING';
-                if (message.includes('成功')) level = 'SUCCESS';
-                addLog(message, level);
+                addLog(data.data);
             } else {
                 addLog(JSON.stringify(data), 'INFO');
             }
@@ -284,7 +458,7 @@
 
         socket.on('initialization_status', (data) => {
             if (data.success) {
-                addLog('AutoDori 初始化成功!', 'SUCCESS');
+                addLog('autodori 初始化成功!', 'SUCCESS');
                 setStatus(true);
             } else {
                 addLog(`初始化失败: ${data.error}`, 'ERROR');
@@ -307,4 +481,3 @@
 </script>
 </body>
 </html>
-
