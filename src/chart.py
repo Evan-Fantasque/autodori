@@ -1,15 +1,15 @@
-import json
 import logging
+import random
 import time
 from pathlib import Path
 
+import yaml
 from minitouchpy import CommandBuilder
 from peewee import *
 from playhouse.sqlite_ext import JSONField
 
 import util
 from api import BestdoriAPI
-import yaml
 
 
 class PlayRecord(Model):
@@ -49,7 +49,7 @@ class Chart:
             return 0
 
         def _get_time_for_section(
-            bpm: float, previous_bpm_beat: float, current_bpm_beat: float
+                bpm: float, previous_bpm_beat: float, current_bpm_beat: float
         ) -> float:
             return (current_bpm_beat - previous_bpm_beat) * (60.0 / bpm) if bpm else 0
 
@@ -109,9 +109,9 @@ class Chart:
         )
 
     def notes_to_actions(
-        self,
-        screen_resolution: tuple[int, int],
-        default_move_slice_size,
+            self,
+            screen_resolution: tuple[int, int],
+            default_move_slice_size,
     ):
         notes: list[dict] = self._chart_data
 
@@ -134,8 +134,8 @@ class Chart:
         def get_finger(from_time, to_time) -> int:
             for finger in available_fingers:
                 if any(
-                    not (to_time <= occupied_from or from_time >= occupied_to)
-                    for occupied_from, occupied_to in finger["occupied_time"]
+                        not (to_time <= occupied_from or from_time >= occupied_to)
+                        for occupied_from, occupied_to in finger["occupied_time"]
                 ):
                     continue
                 else:
@@ -176,15 +176,15 @@ class Chart:
             return result
 
         def add_smooth_move(
-            note_index,
-            finger,
-            from_time,
-            duration,
-            from_,
-            to,
-            slice_size=default_move_slice_size,
-            down=True,
-            up=True,
+                note_index,
+                finger,
+                from_time,
+                duration,
+                from_,
+                to,
+                slice_size=default_move_slice_size,
+                down=True,
+                up=True,
         ):
             to_time = from_time + duration
             from_x, from_y = from_
@@ -234,7 +234,10 @@ class Chart:
             note_index = note_data.get("index", None)
 
             if note_type == "Single":
-                time_ = note_data["time"]
+                if random.random() < 0.01:
+                    time_ = note_data["time"] * random.uniform(0.999, 1)
+                else:
+                    time_ = note_data["time"]
                 from_lane = note_data["lane"]
                 pos = get_lane_position(from_lane)
 
@@ -362,7 +365,7 @@ class Chart:
         self.command_builder = CommandBuilder()
         builder = self.command_builder
         actions = self.actions[
-            self.actions_to_cmd_index : self.actions_to_cmd_index + size
+            self.actions_to_cmd_index: self.actions_to_cmd_index + size
         ]
         commands = self._commands
 
@@ -457,7 +460,7 @@ class Chart:
         dump_path = Path("debug/dump")
         dump_path.mkdir(parents=True, exist_ok=True)
         (
-            dump_path / f"{self._song_name}-{self._difficulty}-{time.time()}.yml"
+                dump_path / f"{self._song_name}-{self._difficulty}-{time.time()}.yml"
         ).write_text(
             yaml.safe_dump(
                 {

@@ -1,275 +1,310 @@
 <!DOCTYPE html>
-<html>
-  <head>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AutoDori WebUI</title>
-    <link
-      rel="stylesheet"
-      href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css"
-    />
-  </head>
-  <body>
-    <div class="container mt-5">
-      <h1 class="text-center">AutoDori WebUI</h1>
-
-      <ul class="nav nav-tabs mt-4" id="modeTabs" role="tablist">
-        <li class="nav-item">
-          <a
-            class="nav-link active"
-            id="fullauto-tab"
-            data-toggle="tab"
-            href="#fullauto"
-            role="tab"
-            aria-controls="fullauto"
-            aria-selected="true"
-            >全自动模式</a
-          >
-        </li>
-        <li class="nav-item">
-          <a
-            class="nav-link"
-            id="semiauto-tab"
-            data-toggle="tab"
-            href="#semiauto"
-            role="tab"
-            aria-controls="semiauto"
-            aria-selected="false"
-            >半自动模式</a
-          >
-        </li>
-      </ul>
-
-      <div class="tab-content" id="modeTabsContent">
-        <!-- 全自动模式 -->
-        <div
-          class="tab-pane fade show active"
-          id="fullauto"
-          role="tabpanel"
-          aria-labelledby="fullauto-tab"
-        >
-          <div class="card">
-            <div class="card-body">
-              <h5 class="card-title">全自动模式</h5>
-              <p class="card-text">
-                从主界面开始，自动选择歌曲并进行游戏。
-              </p>
-              <div class="form-group">
-                <label for="difficulty">难度</label>
-                <select class="form-control" id="difficulty">
-                  <option value="easy">Easy</option>
-                  <option value="normal">Normal</option>
-                  <option value="hard" selected>Hard</option>
-                  <option value="expert">Expert</option>
-                  <option value="special">Special</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label for="livemode">Live模式</label>
-                <select class="form-control" id="livemode">
-                  <option value="freelive" selected>自由演出</option>
-                  <option value="challengelive">挑战演出</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label for="liveboost">最低Live Boost</label>
-                <input
-                  type="number"
-                  class="form-control"
-                  id="liveboost"
-                  value="1"
-                />
-              </div>
-              <button id="startButton" class="btn btn-primary">开始</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 半自动模式 -->
-        <div
-          class="tab-pane fade"
-          id="semiauto"
-          role="tabpanel"
-          aria-labelledby="semiauto-tab"
-        >
-          <div class="card">
-            <div class="card-body">
-              <h5 class="card-title">半自动模式</h5>
-              <p class="card-text">
-                请在游戏中手动选择歌曲和难度，进入
-                <strong>队伍确认界面</strong>
-                后，在此处开始任务。
-              </p>
-
-              <div class="form-group">
-                <label for="songNameInput">歌曲名称</label>
-                <div class="input-group">
-                  <input
-                    type="text"
-                    class="form-control"
-                    id="songNameInput"
-                    placeholder="请在游戏中复制歌曲名后点击右侧按钮"
-                    readonly
-                  />
-                  <div class="input-group-append">
-                    <button
-                      class="btn btn-outline-secondary"
-                      type="button"
-                      id="recognizeClipboardBtn"
-                    >
-                      识别剪贴板
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="form-group">
-                <label for="difficultySemiAuto">难度</label>
-                <select class="form-control" id="difficultySemiAuto">
-                  <option value="easy">Easy</option>
-                  <option value="normal">Normal</option>
-                  <option value="hard" selected>Hard</option>
-                  <option value="expert">Expert</option>
-                  <option value="special">Special</option>
-                </select>
-              </div>
-
-              <button id="startSemiAutoBtn" class="btn btn-success">
-                开始执行
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="mt-4">
-        <h3>日志</h3>
-        <pre
-          id="log"
-          style="
-            height: 300px;
-            overflow-y: scroll;
-            border: 1px solid #ccc;
-            padding: 10px;
-            background-color: #f5f5f5;
-          "
-        ></pre>
-      </div>
-
-      <div id="status" class="mt-2"></div>
-    </div>
-
-    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.5.4/dist/umd/popper.min.js"></script>
-    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
-    <script>
-      $(document).ready(function () {
-        // --- 通用函数 ---
-        function updateStatus() {
-          $.get("/status", function (data) {
-            if (data.is_running) {
-              $("#status").html(
-                '<div class="alert alert-success">状态: 运行中</div>'
-              );
-              $("#startButton, #startSemiAutoBtn").prop("disabled", true);
-            } else {
-              $("#status").html(
-                '<div class="alert alert-info">状态: 待命</div>'
-              );
-              $("#startButton, #startSemiAutoBtn").prop("disabled", false);
-            }
-          });
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827; /* bg-gray-900 */
         }
 
-        const logElement = document.getElementById("log");
-        const eventSource = new EventSource("/log");
-        eventSource.onmessage = function (event) {
-          logElement.innerHTML += event.data;
-          logElement.scrollTop = logElement.scrollHeight;
-        };
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-        setInterval(updateStatus, 1000);
-        updateStatus();
+        /* Custom scrollbar for a cleaner look */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
 
-        // --- 全自动模式 ---
-        $("#startButton").click(function () {
-          const difficulty = $("#difficulty").val();
-          const livemode = $("#livemode").val();
-          const liveboost = $("#liveboost").val();
-          $.ajax({
-            url: "/start",
-            type: "POST",
-            contentType: "application/json",
-            data: JSON.stringify({
-              mode: "full",
-              difficulty: difficulty,
-              livemode: livemode,
-              liveboost: parseInt(liveboost),
-            }),
-            success: function (response) {
-              if (response.success) {
-                logElement.innerHTML += "全自动任务已开始...\n";
-              } else {
-                logElement.innerHTML += "错误: " + response.message + "\n";
-              }
-              updateStatus();
-            },
-          });
+        ::-webkit-scrollbar-track {
+            background: #1f2937; /* bg-gray-800 */
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #4b5563; /* bg-gray-600 */
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6b7280; /* bg-gray-500 */
+        }
+
+        /* Style for the log container to make it feel like a terminal */
+        #log-container {
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        /* Custom styles for the toggle switch */
+        .dot {
+            transform: translateX(0);
+            transition: transform 0.2s ease-in-out;
+        }
+
+        input:checked + .toggle-bg .dot {
+            transform: translateX(100%);
+        }
+
+        input:checked + .toggle-bg {
+            background-color: #3b82f6; /* bg-blue-500 */
+        }
+    </style>
+</head>
+<body class="text-gray-200">
+
+<div class="min-h-screen flex flex-col">
+    <header class="bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 sticky top-0 z-20">
+        <div class="container mx-auto px-4 md:px-8 py-4">
+            <h1 class="text-2xl font-bold text-white">AutoDori WebUI</h1>
+            <p class="text-sm text-gray-400">自动化演奏控制面板</p>
+        </div>
+    </header>
+
+    <main class="flex-grow container mx-auto p-4 md:px-8 md:py-6">
+        <div class="flex flex-col lg:flex-row gap-6 h-full" style="height: calc(100vh - 120px);">
+
+            <!-- Main Content Area: Video feed and floating controls -->
+            <div
+                class="w-full lg:w-2/3 h-full relative flex items-center justify-center bg-black rounded-lg overflow-hidden border border-gray-700 shadow-lg">
+                <img id="video-stream" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
+                     alt="Live Stream" class="max-h-full max-w-full object-contain">
+                <div
+                    class="absolute top-0 left-0 right-0 bottom-0 flex items-center justify-center pointer-events-none">
+                    <p id="stream-placeholder" class="text-gray-500">画面传输已关闭</p>
+                </div>
+
+                <!-- Floating Control Panel -->
+                <div
+                    class="absolute top-4 left-4 w-auto max-w-xs p-4 bg-gray-900/70 backdrop-blur-md rounded-lg border border-gray-700/50 shadow-2xl">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2 class="text-lg font-semibold text-white">控制面板</h2>
+                        <div class="flex items-center space-x-2">
+                            <span id="status-indicator" class="h-3 w-3 rounded-full bg-red-500" title="未初始化"></span>
+                            <span id="status-text" class="text-sm text-gray-400">未初始化</span>
+                        </div>
+                    </div>
+
+                    <div class="space-y-4">
+                        <!-- Initialization -->
+                        <button id="init-button"
+                                class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition-colors duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed">
+                            Initialize AutoDori
+                        </button>
+
+                        <!-- Simplified Auto Play -->
+                        <div>
+                            <label for="difficulty-select"
+                                   class="block mb-2 text-sm font-medium text-gray-300">选择难度</label>
+                            <select id="difficulty-select"
+                                    class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
+                                <option value="easy">Easy</option>
+                                <option value="normal">Normal</option>
+                                <option value="hard" selected>Hard</option>
+                                <option value="expert">Expert</option>
+                                <option value="special">Special</option>
+                            </select>
+                        </div>
+
+                        <!-- FULL Song Toggle -->
+                        <div>
+                            <label for="full-song-toggle" class="flex items-center cursor-pointer">
+                                <div class="relative">
+                                    <input type="checkbox" id="full-song-toggle" class="sr-only">
+                                    <div class="toggle-bg block bg-gray-600 w-14 h-8 rounded-full">
+                                        <div class="dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full"></div>
+                                    </div>
+                                </div>
+                                <div class="ml-3 text-gray-300 font-medium">
+                                    支持FULL歌曲
+                                </div>
+                            </label>
+                        </div>
+
+                        <button id="start-button"
+                                class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md transition-colors duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed"
+                                disabled>
+                            Start Auto Play
+                        </button>
+
+                        <!-- Stream Toggle -->
+                        <div>
+                            <label for="stream-toggle" class="flex items-center cursor-pointer">
+                                <div class="relative">
+                                    <input type="checkbox" id="stream-toggle" class="sr-only" disabled>
+                                    <div class="toggle-bg block bg-gray-600 w-14 h-8 rounded-full">
+                                        <div class="dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full"></div>
+                                    </div>
+                                </div>
+                                <div class="ml-3 text-gray-300 font-medium">
+                                    实时画面
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Log Area -->
+            <div class="w-full lg:w-1/3 h-full flex flex-col bg-gray-900 rounded-lg border border-gray-700 shadow-lg">
+                <div class="px-4 py-3 border-b border-gray-700">
+                    <h2 class="text-lg font-semibold text-white">日志输出</h2>
+                </div>
+                <div id="log-container" class="p-4 flex-grow overflow-y-auto text-sm">
+                    <!-- Logs will be appended here -->
+                </div>
+                <div class="px-4 py-2 border-t border-gray-700">
+                    <button id="clear-log-button" class="text-xs text-gray-400 hover:text-white transition-colors">
+                        清除日志
+                    </button>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const socket = io();
+
+        // --- Element References ---
+        const initButton = document.getElementById('init-button');
+        const startButton = document.getElementById('start-button');
+        const difficultySelect = document.getElementById('difficulty-select');
+        const fullSongToggle = document.getElementById('full-song-toggle');
+        const statusIndicator = document.getElementById('status-indicator');
+        const statusText = document.getElementById('status-text');
+        const logContainer = document.getElementById('log-container');
+        const clearLogButton = document.getElementById('clear-log-button');
+        const videoStream = document.getElementById('video-stream');
+        const streamToggle = document.getElementById('stream-toggle');
+        const streamPlaceholder = document.getElementById('stream-placeholder');
+
+        let isInitialized = false;
+
+        // --- UI Helper Functions ---
+        function addLog(message, level = 'INFO') {
+            const logEntry = document.createElement('div');
+            const timestamp = new Date().toLocaleTimeString();
+
+            let colorClass = 'text-gray-400';
+            if (level === 'ERROR') colorClass = 'text-red-400';
+            if (level === 'WARNING') colorClass = 'text-yellow-400';
+            if (level === 'SUCCESS') colorClass = 'text-green-400';
+
+            logEntry.innerHTML = `<span class="text-gray-500 mr-2">[${timestamp}]</span><span class="${colorClass}">${message}</span>`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        function setStatus(initialized, running = false) {
+            isInitialized = initialized;
+            if (running) {
+                statusIndicator.className = 'h-3 w-3 rounded-full bg-blue-500 animate-pulse';
+                statusText.textContent = '运行中';
+                initButton.disabled = true;
+                startButton.disabled = true;
+            } else if (initialized) {
+                statusIndicator.className = 'h-3 w-3 rounded-full bg-green-500';
+                statusText.textContent = '已初始化';
+                initButton.disabled = true;
+                startButton.disabled = false;
+                streamToggle.disabled = false;
+            } else {
+                statusIndicator.className = 'h-3 w-3 rounded-full bg-red-500';
+                statusText.textContent = '未初始化';
+                initButton.disabled = false;
+                startButton.disabled = true;
+                streamToggle.disabled = true;
+            }
+        }
+
+        // --- Event Listeners ---
+        initButton.addEventListener('click', () => {
+            addLog('正在初始化 AutoDori...', 'INFO');
+            statusText.textContent = '初始化中...';
+            setStatus(false, true); // Visually indicate "running"
+            socket.emit('initialize');
         });
 
-        // --- 半自动模式 ---
-        $("#recognizeClipboardBtn").click(function () {
-          const btn = $(this);
-          btn.prop("disabled", true).text("识别中...");
-          $.ajax({
-            url: "/recognize_clipboard",
-            type: "POST",
-            success: function (response) {
-              if (response.success) {
-                $("#songNameInput").val(response.song_name);
-                logElement.innerHTML +=
-                  "歌曲识别成功: " + response.song_name + "\n";
-              } else {
-                alert("识别失败: " + response.message);
-                logElement.innerHTML += "错误: " + response.message + "\n";
-              }
-            },
-            error: function () {
-              alert("请求后端失败。");
-              logElement.innerHTML += "错误: /recognize_clipboard 请求失败\n";
-            },
-            complete: function () {
-              btn.prop("disabled", false).text("识别剪贴板");
-            },
-          });
+        startButton.addEventListener('click', () => {
+            const difficulty = difficultySelect.value;
+            const isFullSong = fullSongToggle.checked;
+            addLog(`开始自动演奏 (难度: ${difficulty}, FULL: ${isFullSong})...`, 'INFO');
+            setStatus(true, true);
+            socket.emit('start_simplified_auto', {
+                difficulty: difficulty,
+                is_full_song: isFullSong
+            });
         });
 
-        $("#startSemiAutoBtn").click(function () {
-          const songName = $("#songNameInput").val();
-          const difficulty = $("#difficultySemiAuto").val();
-          if (!songName) {
-            alert("请先从剪贴板识别一首歌曲。");
-            return;
-          }
-
-          $.ajax({
-            url: "/start",
-            type: "POST",
-            contentType: "application/json",
-            data: JSON.stringify({
-              mode: "semiauto",
-              song_name: songName,
-              difficulty: difficulty,
-            }),
-            success: function (response) {
-              if (response.success) {
-                logElement.innerHTML += "半自动任务已开始...\n";
-              } else {
-                logElement.innerHTML += "错误: " + response.message + "\n";
-              }
-              updateStatus();
-            },
-          });
+        clearLogButton.addEventListener('click', () => {
+            logContainer.innerHTML = '';
         });
-      });
-    </script>
-  </body>
+
+        streamToggle.addEventListener('change', () => {
+            if (streamToggle.checked) {
+                addLog('开启实时画面传输。', 'INFO');
+                streamPlaceholder.style.display = 'none';
+                videoStream.style.display = 'block';
+                socket.emit('start_stream');
+            } else {
+                addLog('关闭实时画面传输。', 'INFO');
+                socket.emit('stop_stream');
+                videoStream.src = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='; // Clear image
+                streamPlaceholder.style.display = 'block';
+                videoStream.style.display = 'none';
+            }
+        });
+
+        // --- Socket.IO Event Handlers ---
+        socket.on('connect', () => {
+            addLog('已连接到后端服务器。', 'SUCCESS');
+            setStatus(false);
+        });
+
+        socket.on('disconnect', () => {
+            addLog('与后端服务器断开连接。', 'ERROR');
+            setStatus(false);
+        });
+
+        socket.on('log', (data) => {
+            if (typeof data === 'object' && data !== null && data.data != null) {
+                const message = data.data;
+                let level = 'INFO';
+                if (message.includes('ERROR') || message.includes('失败')) level = 'ERROR';
+                if (message.includes('WARNING')) level = 'WARNING';
+                if (message.includes('成功')) level = 'SUCCESS';
+                addLog(message, level);
+            } else {
+                addLog(JSON.stringify(data), 'INFO');
+            }
+        });
+
+        socket.on('initialization_status', (data) => {
+            if (data.success) {
+                addLog('AutoDori 初始化成功!', 'SUCCESS');
+                setStatus(true);
+            } else {
+                addLog(`初始化失败: ${data.error}`, 'ERROR');
+                setStatus(false);
+            }
+        });
+
+        socket.on('task_finished', () => {
+            addLog('自动演奏任务已完成。', 'SUCCESS');
+            setStatus(true, false);
+        });
+
+        socket.on('update_frame', (data) => {
+            videoStream.src = `data:image/jpeg;base64,${data.image}`;
+        });
+
+        // Initial state
+        setStatus(false);
+    });
+</script>
+</body>
 </html>
+
