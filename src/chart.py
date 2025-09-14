@@ -234,10 +234,13 @@ class Chart:
             note_index = note_data.get("index", None)
 
             if note_type == "Single":
+                """
                 if random.random() < 0.01:
                     time_ = note_data["time"] * random.uniform(0.999, 1)
                 else:
                     time_ = note_data["time"]
+                """
+                time_ = note_data["time"]
                 from_lane = note_data["lane"]
                 pos = get_lane_position(from_lane)
 
