@@ -148,6 +148,12 @@ if __name__ == "__main__":
     port = find_free_port()
     url = f"http://127.0.0.1:{port}"
 
+    # 在后台启动一个线程，用于检查是否需要打开浏览器
+    # 设置为守护线程(daemon=True)，这样主程序退出时该线程也会随之结束
+    browser_opener_thread = threading.Thread(target=open_browser_if_needed, args=(url,))
+    browser_opener_thread.daemon = True
+    browser_opener_thread.start()
+
     logging.info(f"AutoDori WebUI 将在 {url} 启动")
     logging.info("将在1秒后尝试自动打开浏览器...")
 
