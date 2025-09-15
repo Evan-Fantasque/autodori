@@ -165,7 +165,7 @@ def find_free_port(preferred_port=None):
 
     # 步骤 2: 如果没有指定优先端口，或者优先端口被占用，则查找一个随机端口
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
+        s.bind(("", 0))  # 绑定到端口0，由系统自动分配
         return s.getsockname()[1]
 
 
