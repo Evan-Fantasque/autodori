@@ -137,8 +137,33 @@ def handle_update_stream_settings(settings):
 
 
 # --- Main Execution ---
-def find_free_port():
-    """Finds a free port on the local machine."""
+def find_free_port(preferred_port=None):
+    """
+    查找一个可用的网络端口。
+
+    可以优先尝试一个指定的端口，如果该端口不可用，
+    则自动查找并返回一个随机的可用端口。
+
+    Args:
+        preferred_port (int, optional): 优先尝试的端口号。默认为None，
+                                        表示直接查找任意可用端口。
+
+    Returns:
+        int: 一个可用的端口号。
+    """
+    # 步骤 1: 如果指定了优先端口，则尝试使用它
+    if preferred_port:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("", preferred_port))
+                # 如果绑定成功，说明该端口可用，直接返回
+                return preferred_port
+        except OSError:
+            # 如果捕获到 OSError (例如: 地址已在使用中)，
+            # 说明端口被占用，打印一条警告并继续执行下一步。
+            print(f"警告: 优先端口 {preferred_port}已被占用，将查找其他可用端口。")
+
+    # 步骤 2: 如果没有指定优先端口，或者优先端口被占用，则查找一个随机端口
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
         return s.getsockname()[1]
