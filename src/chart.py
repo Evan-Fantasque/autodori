@@ -348,6 +348,18 @@ class Chart:
                 next_time = actions[i + 1]["time"]
 
                 if next_time - current_time > 0.001:
+                    # 计算理论等待时长
+                    wait_length = next_time - current_time
+
+                    # --- 改动开始 ---
+                    # 新的人为延迟机制：每隔 humanize_interval 个动作，就添加一次延迟
+                    if humanize and humanize_interval > 0 and i % humanize_interval == 0:
+                        # 随机延迟时间 (16ms to 64ms)
+                        # 注意：这里修正了之前版本中将毫秒错误除以1000的问题
+                        human_delay = 16 * random.randint(1, 4)
+                        wait_length += human_delay
+                    # --- 改动结束 ---
+
                     actions_with_wait.append(
                         {
                             "type": "wait",
