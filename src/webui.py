@@ -144,6 +144,17 @@ def find_free_port():
         return s.getsockname()[1]
 
 
+def open_browser_if_needed(url):
+    """
+    等待1.5秒，然后检查是否有WebUI连接。如果没有，则打开浏览器。
+    """
+    time.sleep(1.5)
+    if not webui_connect:
+        logging.info("WebUI未连接，将在1秒后自动打开浏览器...")
+        # 使用一个新的线程来打开浏览器，以避免阻塞主线程
+        threading.Timer(1, lambda: webbrowser.open_new_tab(url)).start()
+
+
 if __name__ == "__main__":
     port = find_free_port()
     url = f"http://127.0.0.1:{port}"
