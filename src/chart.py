@@ -364,7 +364,7 @@ class Chart:
                         {
                             "type": "wait",
                             "time": current_time,
-                            "length": next_time - current_time,
+                            "length": wait_length,
                         }
                     )
             else:

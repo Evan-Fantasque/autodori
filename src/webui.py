@@ -181,7 +181,7 @@ def open_browser_if_needed(url):
 
 
 if __name__ == "__main__":
-    port = find_free_port()
+    port = find_free_port(8000)
     url = f"http://127.0.0.1:{port}"
 
     # 在后台启动一个线程，用于检查是否需要打开浏览器
