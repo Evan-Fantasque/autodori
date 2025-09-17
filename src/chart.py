@@ -112,6 +112,7 @@ class Chart:
             self,
             screen_resolution: tuple[int, int],
             default_move_slice_size,
+            humanize: bool = True,
     ):
         notes: list[dict] = self._chart_data
 
@@ -234,12 +235,6 @@ class Chart:
             note_index = note_data.get("index", None)
 
             if note_type == "Single":
-                """
-                if random.random() < 0.01:
-                    time_ = note_data["time"] * random.uniform(0.999, 1)
-                else:
-                    time_ = note_data["time"]
-                """
                 time_ = note_data["time"]
                 from_lane = note_data["lane"]
                 pos = get_lane_position(from_lane)
@@ -341,25 +336,72 @@ class Chart:
         actions: list[dict]
 
         actions_with_wait: list[dict] = []
+        if humanize:
+            # =================== “分而治之”参数配置 ===================
+            # 1. 定义不同打击倾向的“占比” (三者相加建议为 1.0)
+            EARLY_HIT_PROBABILITY = 0.05  # 40% 的音符会倾向于“抢拍”
+            LATE_HIT_PROBABILITY = 0.05  # 40% 的音符会倾向于“拖拍”
+            # 剩下的 20% (1.0 - 0.4 - 0.4) 将是“标准型”
+
+            # 2. 定义不同倾向的“偏移范围” (毫秒), 基于 Perfect 区间 (-33ms, +50ms)
+            EARLY_HIT_RANGE_MS = (-24, -16)  # 抢拍范围：在-30ms到-15ms之间随机
+            LATE_HIT_RANGE_MS = (24, 30)  # 拖拍范围：在+35ms到+50ms之间随机
+            STANDARD_HIT_RANGE_MS = (-2, 2)  # 标准范围：在-10ms到+10ms之间随机
+
+            # 3. 按键的微小随机持续时长
+            TINY_DURATION_RANGE_MS = (5, 10)
+            # ==========================================================
+
+            note_map = {note.get('index'): note for note in self._chart_data if note.get('index') is not None}
+            note_down_times = {}
+
+            for action in actions:
+                note_index = action.get('note')
+                original_note = note_map.get(note_index)
+
+                if (original_note and
+                        original_note.get('type') == 'Single' and
+                        not original_note.get('flick', False)):
+
+                    if action['type'] == 'down':
+                        # --- 核心决策逻辑 ---
+                        dice_roll = random.random()
+                        random_jitter = 0
+
+                        if dice_roll < EARLY_HIT_PROBABILITY:
+                            # 判定为“抢拍型”
+                            random_jitter = random.uniform(EARLY_HIT_RANGE_MS[0], EARLY_HIT_RANGE_MS[1])
+                        elif dice_roll < EARLY_HIT_PROBABILITY + LATE_HIT_PROBABILITY:
+                            # 判定为“拖拍型”
+                            random_jitter = random.uniform(LATE_HIT_RANGE_MS[0], LATE_HIT_RANGE_MS[1])
+                        else:
+                            # 判定为“标准型”
+                            random_jitter = random.uniform(STANDARD_HIT_RANGE_MS[0], STANDARD_HIT_RANGE_MS[1])
+
+                        new_down_time = action['time'] + random_jitter
+                        action['time'] = new_down_time
+                        note_down_times[note_index] = new_down_time
+
+                    elif action['type'] == 'up':
+                        if note_index in note_down_times:
+                            down_time = note_down_times[note_index]
+                            tiny_duration = random.uniform(TINY_DURATION_RANGE_MS[0], TINY_DURATION_RANGE_MS[1])
+                            action['time'] = down_time + tiny_duration
+
+        # ... (后续的排序和 wait 计算代码保持不变) ...
+
+        # 随机化后需要重新排序，以确保时间的先后顺序正确
+        actions.sort(key=lambda x: x["time"])
+
+        # 根据最终带有偏移的时间，重新计算等待间隔
         for i, action in enumerate(actions):
             actions_with_wait.append(action)
-            if i != len(actions) - 1:
+            if i < len(actions) - 1:
                 current_time = action["time"]
                 next_time = actions[i + 1]["time"]
+                wait_length = next_time - current_time
 
-                if next_time - current_time > 0.001:
-                    # 计算理论等待时长
-                    wait_length = next_time - current_time
-
-                    # --- 改动开始 ---
-                    # 新的人为延迟机制：每隔 humanize_interval 个动作，就添加一次延迟
-                    if humanize and humanize_interval > 0 and i % humanize_interval == 0:
-                        # 随机延迟时间 (16ms to 64ms)
-                        # 注意：这里修正了之前版本中将毫秒错误除以1000的问题
-                        human_delay = 16 * random.randint(1, 4)
-                        wait_length += human_delay
-                    # --- 改动结束 ---
-
+                if wait_length > 0.001:
                     actions_with_wait.append(
                         {
                             "type": "wait",
@@ -367,8 +409,6 @@ class Chart:
                             "length": wait_length,
                         }
                     )
-            else:
-                pass
 
         [
             action.setdefault("index", index)

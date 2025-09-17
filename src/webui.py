@@ -173,6 +173,7 @@ def open_browser_if_needed(url):
     """
     等待1.5秒，然后检查是否有WebUI连接。如果没有，则打开浏览器。
     """
+    webui_connect=True
     time.sleep(1.5)
     if not webui_connect:
         logging.info("WebUI未连接，将在1秒后自动打开浏览器...")
@@ -181,7 +182,7 @@ def open_browser_if_needed(url):
 
 
 if __name__ == "__main__":
-    port = find_free_port(8000)
+    port = find_free_port(9000)
     url = f"http://127.0.0.1:{port}"
 
     # 在后台启动一个线程，用于检查是否需要打开浏览器

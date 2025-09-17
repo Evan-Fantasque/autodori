@@ -134,9 +134,71 @@ def save_song(name):
 
 
 def play_song():
-    logging.info("Starting song playback...")
+    """
+    重构后的play_song函数。
+    集成了“等待加载”、“等待画面静止”和“光电门检测”三大功能。
+    模板匹配被限制在屏幕的右上角区域，以提高效率和准确性。
+    """
     cmd_log_list.clear()
     reset_callback_data()
+
+    # --- STAGE 1: 等待游戏加载 (检测暂停按钮) ---
+    logging.info("==> [阶段1] 等待游戏加载，正在检测暂停按钮...")
+
+    CONFIDENCE_THRESHOLD = 0.4
+    template_path = Path("assets/resource/image/live/button/pause.png")
+
+    if not template_path.exists():
+        logging.error(f"暂停按钮模板图片未找到: {template_path}")
+        return
+
+    template = cv2.imread(str(template_path), 0)
+    if template is None:
+        logging.error(f"无法加载模板图片: {template_path}")
+        return
+
+    pause_button_found = False
+    wait_start_time = time.time()
+
+    # 新增一个标志位，确保ROI截图只保存一次
+    roi_screenshot_saved = False
+
+    while not pause_button_found:
+        if time.time() - wait_start_time > 30:
+            logging.error("等待暂停按钮超时 (30秒)，演奏任务中止。")
+            return
+
+        screen = current_player.ipc_capture_display()
+        if screen is None:
+            time.sleep(0.5)
+            continue
+
+        height, width, _ = screen.shape
+
+        roi_y_start = 0
+        roi_y_end = int(height * 0.15)
+        roi_x_start = int(width * 0.95)
+        roi_x_end = width
+
+        roi_screen = screen[roi_y_start:roi_y_end, roi_x_start:roi_x_end]
+        gray_roi = cv2.cvtColor(roi_screen, cv2.COLOR_BGR2GRAY)
+
+        # 1. 灰度模板匹配
+        result = cv2.matchTemplate(gray_roi, template, cv2.TM_CCOEFF_NORMED)
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+
+        confidence = max_val
+        best_match_loc = max_loc
+
+        logging.info(f"等待暂停按钮... 匹配度: {confidence:.2f}")
+
+        if confidence >= CONFIDENCE_THRESHOLD:
+            pause_button_found = True
+        else:
+            time.sleep(0.2)
+
+    # --- STAGE 2 & 3: 等待画面静止 & 光电门检测 ---
+    logging.info("==> [阶段2] 等待画面静止...")
 
     def _adjust_offset():
         global callback_data
@@ -149,8 +211,6 @@ def play_song():
                 OFFSET[type_] = type_data["total_offset"] / total
 
         current_chart._a2c_offset += total_cost
-        logging.debug("Adjust offset: {}".format(OFFSET))
-        logging.debug("Adjust _actions_to_cmd_offset: {}".format(total_cost))
 
     def _get_wait_time():
         wait_for = 0.0
@@ -166,36 +226,39 @@ def play_song():
     info = get_runtime_info(current_player.resolution)["wait_first"]
     from_row, to_row = info["from"], info["to"]
     freezed = False
-    logging.info("Waiting for the first note...")
+
     while True:
         try:
             screen = current_player.ipc_capture_display()
             cur_color, _ = get_color_eval_in_range(screen, from_row, to_row)
             if last_color is not None:
-                change_score = np.sum(
-                    np.abs(cur_color[:3].astype(int) - last_color[:3].astype(int))
-                )
-                if change_score > 3:
+                change_score = np.sum(np.abs(cur_color[:3].astype(int) - last_color[:3].astype(int)))
+
+                # 调试日志：打印颜色变化量
+                logging.info(f"颜色变化量: {change_score}")
+
+                if change_score > 3:  # 阈值可根据需要调整
                     if freezed:
-                        logging.info("First note detected!")
+                        logging.info("==> [阶段3] 检测到第一个音符！开始演奏！")
                         time.sleep(PHOTOGATE_LATENCY / 1000)
-                        break
+                        break  # 跳出循环，开始执行命令
                 elif not freezed:
                     waited_frames += 1
-                if not freezed and waited_frames >= 200:
+
+                if not freezed and waited_frames >= 150:  # 静止帧数要求，可调整
                     freezed = True
-                    logging.info("Screen is static, ready for the first note...")
+                    logging.info("画面已静止，光电门已准备就绪！")
             last_color = cur_color
         except Exception as e:
-            logging.error(f"Error while waiting for first note: {e}")
+            logging.error(f"在光电门检测期间发生错误: {e}")
             time.sleep(0.1)
 
-    # --- Command Execution Loop with Latency Compensation ---
+    # --- STAGE 4: 命令执行循环 ---
+    logging.info("==> [阶段4] 开始执行演奏指令...")
     while True:
         current_chart.command_builder.publish(mnt, block=False)
         wait_time = _get_wait_time()
         time.sleep(max(0, wait_time - 3) / 1000)
-
         index = current_chart.actions_to_cmd_index
         if current_chart.actions[index: index + CMD_SLICE_SIZE]:
             with callback_data_lock:
@@ -206,7 +269,6 @@ def play_song():
             )
         else:
             break
-    time.sleep(2)
     logging.info("Playback finished.")
 
 
@@ -542,12 +604,6 @@ def run_simplified_autodori(config_data):
             "template": "live/button/live_medley.png",
             "timeout": 7500,
             "threshold": 0.5,
-        },
-        "wait_live_start": {
-            "recognition": "TemplateMatch",
-            "template": "live/button/pause.png",
-            "next": "playsong",
-            "threshold": 0.7,
         },
         "playsong": {
             "action": "Custom",
