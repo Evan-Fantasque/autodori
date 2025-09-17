@@ -615,6 +615,5 @@ def run_simplified_autodori(config_data):
 
     logging.info("正在提交简化版自动演奏任务...")
     result = maatasker.post_task("ui_simplified_entry", override_pipeline).wait()
-    if not result.success:
-        logging.error(f"简化版自动演奏任务失败，状态: {result.status}")
+    logging.error(f"简化版自动演奏任务失败，状态: {result.status}")
     logging.info("简化版自动演奏任务完成。")
