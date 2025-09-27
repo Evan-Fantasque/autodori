@@ -335,20 +335,19 @@ class Chart:
         actions.sort(key=lambda x: x["time"])
         actions: list[dict]
 
-        # 【最终版：实现按下即抬起的微小随机时长逻辑】
         actions_with_wait: list[dict] = []
         if humanize:
             # =================== “分而治之”参数配置 ===================
             # 1. 定义不同打击倾向的“占比” (三者相加建议为 1.0)
-            EARLY_HIT_PROBABILITY = 0.1  # “抢拍”
-            LATE_HIT_PROBABILITY = 0.1  # “拖拍”
+            EARLY_HIT_PROBABILITY = 0.025  # “抢拍”
+            LATE_HIT_PROBABILITY = 0.025  # “拖拍”
 
             # 2. 定义不同倾向的“偏移范围” (毫秒), 基于 Perfect 区间 (-33ms, +50ms)
             EARLY_HIT_RANGE_MS = (-26, -22)  # 抢拍范围
-            LATE_HIT_RANGE_MS = (22, 26)  # 拖拍范围
+            LATE_HIT_RANGE_MS = (26, 32)  # 拖拍范围
 
             # 3. 按键的微小随机持续时长
-            TINY_DURATION_RANGE_MS = (5, 10)
+            TINY_DURATION_RANGE_MS = (20, 30)
             # ==========================================================
 
             note_map = {note.get('index'): note for note in self._chart_data if note.get('index') is not None}
@@ -368,13 +367,13 @@ class Chart:
 
                         if dice_roll < EARLY_HIT_PROBABILITY:
                             # 判定为“抢拍型”
-                            random_jitter = random.uniform(EARLY_HIT_RANGE_MS[0], EARLY_HIT_RANGE_MS[1])
+                            random_jitter = -30
                         elif dice_roll < EARLY_HIT_PROBABILITY + LATE_HIT_PROBABILITY:
                             # 判定为“拖拍型”
-                            random_jitter = random.uniform(LATE_HIT_RANGE_MS[0], LATE_HIT_RANGE_MS[1])
+                            random_jitter = 30
                         else:
                             # 判定为“标准型”
-                            random_jitter = 0
+                            random_jitter = random.randint(-5, 5)
 
                         new_down_time = action['time'] + random_jitter
                         action['time'] = new_down_time
@@ -383,9 +382,7 @@ class Chart:
                     elif action['type'] == 'up':
                         if note_index in note_down_times:
                             down_time = note_down_times[note_index]
-                            tiny_duration = random.uniform(TINY_DURATION_RANGE_MS[0], TINY_DURATION_RANGE_MS[1])
-                            action['time'] = down_time + tiny_duration
-                    # ====================================================
+                            action['time'] = down_time + random.randint(15, 25)
 
         # 随机化后需要重新排序 (此部分代码保持不变)
         actions.sort(key=lambda x: x["time"])
@@ -393,29 +390,26 @@ class Chart:
         # 根据最终带有偏移的时间，重新计算等待间隔 (此部分代码保持不变)
         for i, action in enumerate(actions):
             actions_with_wait.append(action)
-            if i < len(actions) - 1:
+            if i != len(actions) - 1:
                 current_time = action["time"]
                 next_time = actions[i + 1]["time"]
-                wait_length = next_time - current_time
 
-                if wait_length > 0.001:
+                if next_time - current_time > 0.001:
                     actions_with_wait.append(
                         {
                             "type": "wait",
                             "time": current_time,
-                            "length": wait_length,
+                            "length": next_time - current_time,
                         }
                     )
+            else:
+                pass
 
         [
             action.setdefault("index", index)
             for index, action in enumerate(actions_with_wait)
         ]
         self.actions = actions_with_wait
-
-        # =================================================================
-        # =====================     替换结束     =====================
-        # =================================================================
 
     def actions_to_MNTcmd(self, resolution, orientation, offset_info, size=50):
         self.command_builder = CommandBuilder()

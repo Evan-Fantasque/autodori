@@ -128,16 +128,40 @@ def handle_run_task(data):
         global is_task_running
         is_task_running = True
         broadcast_status()
+        overall_success = False  # Flag to determine the final message
         try:
             config = {
                 "difficulty": data.get("difficulty", "hard"),
                 "is_full_song": data.get("is_full_song", False),
                 "human_delay": data.get("human_delay", False)
             }
-            autodori_ui.run_simplified_autodori(config)
-            socketio.emit("task_finished", {"message": "自动演奏任务已完成。", "level": "SUCCESS"})
+            auto_replay = data.get("auto_replay", False)
+            runs = 3 if auto_replay else 1
+
+            for i in range(runs):
+                if i > 0:
+                    logging.info(f"连战: 开始第 {i + 1}/{runs} 次演奏...")
+
+                success = autodori_ui.run_simplified_autodori(config)
+
+                if not success:
+                    logging.error(f"第 {i + 1} 次演奏失败，停止连战。")
+                    socketio.emit("task_finished", {"message": f"第 {i+1} 次演奏时任务失败，连战已中止。", "level": "ERROR"})
+                    overall_success = False
+                    break
+
+                if i < runs - 1:
+                    logging.info(f"第 {i + 1} 次演奏完成，等待 15 秒进行下一次...")
+                    time.sleep(15)
+            else:
+                # This 'else' belongs to the 'for' loop.
+                # It executes only if the loop completed without a 'break'.
+                overall_success = True
+
+            if overall_success:
+                socketio.emit("task_finished", {"message": "自动演奏任务已完成。", "level": "SUCCESS"})
         except Exception as e:
-            logging.error(f"简化版自动演奏失败: {e}")
+            logging.error(f"自动演奏任务执行期间发生意外错误: {e}", exc_info=True)
             socketio.emit("task_finished", {"message": f"任务执行失败: {e}", "level": "ERROR"})
         finally:
             is_task_running = False
@@ -172,27 +196,13 @@ def handle_update_stream_settings(settings):
     except Exception as e:
         logging.error(f"更新画面传输设置失败: {e}")
 
-
-# --- Main Execution ---
-import socket
-
-
 def find_free_port(preferred_port=None):
-    """
-    查找一个可用的网络端口。
-    该版本经过优化，通过设置 SO_REUSEADDR 选项解决了在Windows上因 TIME_WAIT 状态
-    导致的端口检查后立即使用失败的问题。
-    """
     # 步骤 1: 如果指定了优先端口，则尝试使用它
     if preferred_port:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                # --- 关键修改 ---
-                # 在绑定前设置 SO_REUSEADDR 选项，允许重用处于 TIME_WAIT 状态的地址
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
                 # 尝试绑定端口
-                s.bind(("", preferred_port))
+                s.bind(("127.0.0.1", preferred_port))
 
                 # 如果绑定成功，说明该端口可用，直接返回
                 return preferred_port
@@ -202,7 +212,7 @@ def find_free_port(preferred_port=None):
 
     # 步骤 2: 如果没有指定优先端口，或者优先端口被占用，则查找一个随机可用端口
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))  # 绑定到端口0，由系统自动分配一个临时端口
+        s.bind(("127.0.0.1", 0))  # 绑定到端口0，由系统自动分配一个临时端口
         return s.getsockname()[1]
 
 

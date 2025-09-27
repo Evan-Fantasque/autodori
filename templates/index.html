@@ -168,6 +168,20 @@
                                 </div>
                             </label>
                         </div>
+                        <div>
+                            <label for="auto-replay-toggle" class="flex items-center cursor-pointer"
+                                   title="演出成功后，自动等待5秒并再次开始，最多进行3次。">
+                                <div class="relative">
+                                    <input type="checkbox" id="auto-replay-toggle" class="sr-only">
+                                    <div class="toggle-bg block bg-gray-600 w-14 h-8 rounded-full">
+                                        <div class="dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full"></div>
+                                    </div>
+                                </div>
+                                <div class="ml-3 text-gray-300 font-medium">
+                                    自动连战 (3次)
+                                </div>
+                            </label>
+                        </div>
                         <button id="start-button"
                                 class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md transition-colors duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed"
                                 disabled>
@@ -416,11 +430,13 @@
             const difficulty = difficultySelect.value;
             const isFullSong = fullSongToggle.checked;
             const humanDelay = document.getElementById('human-delay-toggle').checked;
-            addLog(`开始自动演奏 (难度: ${difficulty}, FULL: ${isFullSong}, 人为延迟: ${humanDelay})...`, 'INFO');
+            const autoReplay = document.getElementById('auto-replay-toggle').checked;
+            addLog(`开始自动演奏 (难度: ${difficulty}, FULL: ${isFullSong}, 人为延迟: ${humanDelay}, 自动连战: ${autoReplay})...`, 'INFO');
             socket.emit('start_simplified_auto', {
                 difficulty: difficulty,
                 is_full_song: isFullSong,
-                human_delay: humanDelay
+                human_delay: humanDelay,
+                auto_replay: autoReplay
             });
         });
 

@@ -581,6 +581,15 @@ def run_simplified_autodori(config_data):
 
     logging.info("正在提交简化版自动演奏任务 (已集成加载检测)...")
     result = maatasker.post_task("ui_simplified_entry", override_pipeline).wait()
-    if result.get():
-        logging.error(f"状态: {result.get()}")
-    logging.info("简化版自动演奏任务完成。")
+
+    task_detail = result.get()
+    if task_detail:
+        # Logging the raw detail object for debugging/information purposes
+        logging.debug(f"任务完成，详细信息: {task_detail}")
+
+    if result.succeeded:
+        logging.info("简化版自动演奏任务成功。")
+        return True
+    else:
+        logging.error(f"简化版自动演奏任务失败。")
+        return False
