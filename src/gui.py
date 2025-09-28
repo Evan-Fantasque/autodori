@@ -74,14 +74,18 @@ class AutodoriGUI:
         mode_frame.pack(fill=tk.X, padx=5, pady=5)
         ttk.Label(mode_frame, text="模式:").pack(side=tk.LEFT)
         ttk.Radiobutton(mode_frame, text="单曲模式", variable=self.mode_var, value='single').pack(side=tk.LEFT, padx=10)
-        ttk.Radiobutton(mode_frame, text="全自动", variable=self.mode_var, value='full_auto').pack(side=tk.LEFT,
+        ttk.Radiobutton(mode_frame, text="全自动模式", variable=self.mode_var, value='full_auto').pack(side=tk.LEFT,
                                                                                                    padx=10)
+
+        # --- 新增: 创建一个用于放置警告的容器，并将其放在 mode_frame 的右侧 ---
+        warnings_frame = ttk.Frame(mode_frame)
+        warnings_frame.pack(side=tk.RIGHT, padx=(20, 0)) # padx 在左侧增加一些间距
 
         # --- 其他配置 ---
         options_frame = ttk.Frame(config_frame)
         options_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        ttk.Label(options_frame, text="难度:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(options_frame, text="难度:").pack(side=tk.LEFT)
         ttk.Combobox(options_frame, textvariable=self.difficulty_var,
                      values=['easy', 'normal', 'hard', 'expert', 'special'], width=10).pack(side=tk.LEFT, padx=5)
 
@@ -95,14 +99,18 @@ class AutodoriGUI:
         full_song_frame = ttk.Frame(options_frame)
         full_song_frame.pack(side=tk.LEFT, padx=10)
         ttk.Checkbutton(full_song_frame, text="支持FULL曲", variable=self.isfull_var).pack(side=tk.LEFT)
-        self.full_song_warning_label = ttk.Label(full_song_frame, text="警告：成功率极低\r将强制给任何歌名前增加[FULL]\r不要对没有FULL的歌曲使用", style="Warning.TLabel")
-        # 默认不显示，pack之后立即forget
+
+        # --- 修改: 将警告标签的父组件改为 warnings_frame ---
+        self.full_song_warning_label = ttk.Label(warnings_frame, text="警告：成功率极低，绝对不要对没有FULL的歌曲使用", style="Warning.TLabel")
 
         # 2. 类人延迟
         human_delay_frame = ttk.Frame(options_frame)
         human_delay_frame.pack(side=tk.LEFT, padx=10)
         ttk.Checkbutton(human_delay_frame, text="随机化按键", variable=self.human_var).pack(side=tk.LEFT)
-        self.human_delay_warning_label = ttk.Label(human_delay_frame, text="警告：可能导致不能FC", style="Warning.TLabel")
+
+        # --- 修改: 将警告标签的父组件改为 warnings_frame ---
+        self.human_delay_warning_label = ttk.Label(warnings_frame, text="警告：可能导致不能FC", style="Warning.TLabel")
+
         # 初始时根据默认值决定是否显示
         self._update_warnings()
 
@@ -177,20 +185,20 @@ class AutodoriGUI:
             self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
 
-    # --- 新增：用于更新警示文本显示状态的回调函数 ---
     def _update_warnings(self, *args):
         # 检查 "支持FULL曲" 的状态
         if self.isfull_var.get():
-            # .winfo_exists() 检查控件是否已被pack，避免重复pack
             if not self.full_song_warning_label.winfo_exists() or not self.full_song_warning_label.winfo_ismapped():
-                self.full_song_warning_label.pack(side=tk.LEFT, padx=(0, 5))
+                # 修改: 使用 anchor='w' 让文本在垂直容器内左对齐
+                self.full_song_warning_label.pack(anchor='w')
         else:
             self.full_song_warning_label.pack_forget()
 
         # 检查 "类人延迟" 的状态
         if self.human_var.get():
             if not self.human_delay_warning_label.winfo_exists() or not self.human_delay_warning_label.winfo_ismapped():
-                self.human_delay_warning_label.pack(side=tk.LEFT, padx=(0, 5))
+                # 修改: 使用 anchor='w' 让文本在垂直容器内左对齐
+                self.human_delay_warning_label.pack(anchor='w')
         else:
             self.human_delay_warning_label.pack_forget()
 
