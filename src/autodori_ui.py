@@ -1,28 +1,12 @@
-import sys # 确保 sys 已导入
-from pathlib import Path # 确保 Path 已导入
-
-
-def resource_path(relative_path):
-    """
-    获取资源的绝对路径，兼容开发环境（包括 src 目录布局）和 PyInstaller 打包环境。
-    """
-    # getattr(sys, 'frozen', False) 是检查是否在打包后运行的标准方法
-    if getattr(sys, 'frozen', False):
-        # 打包后运行时，基路径是 PyInstaller 创建的临时文件夹
-        base_path = Path(sys._MEIPASS)
-    else:
-        # 开发时运行时，我们从当前文件(__file__)的位置(src/)向上追溯一级到达项目根目录
-        base_path = Path(__file__).parent.parent
-
-    return base_path / relative_path
-
 import base64
 import json
 import logging
 import re
 import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -49,6 +33,23 @@ from api import BestdoriAPI
 from chart import Chart, PlayRecord
 from util import get_color_eval_in_range, get_runtime_info
 
+
+def resource_path(relative_path):
+    """
+    Get the absolute path to a resource, compatible with both development environments
+    (including the 'src' directory layout) and PyInstaller-packaged environments.
+    """
+    if getattr(sys, 'frozen', False):
+        # When running in a packaged bundle, the base path is the temporary folder created by PyInstaller.
+        base_path = Path(sys._MEIPASS)
+    else:
+        # In a development environment, trace up one level from the current file's location (__file__)
+        # to the project root.
+        base_path = Path(__file__).parent.parent
+
+    return base_path / relative_path
+
+
 # --- Global Variables & Constants ---
 MIN_LIVEBOOST = 1
 DIFFICULTY = "hard"
@@ -61,9 +62,10 @@ HUMAN_DELAY_ENABLED = True
 MAX_FAILED_TIMES = 10
 play_failed_times: int = 0
 
-# --- 新增：用于追踪“未 Full Combo”的全局变量 ---
+# Global variable to track songs that were not Full Combo'd.
 not_fc_song_counts: dict[str, int] = {}
-MAX_NOT_FC_COUNT = 1  # 未FC次数达到此上限后，将跳过该歌曲
+# A song will be skipped after failing to achieve a Full Combo this many times.
+MAX_NOT_FC_COUNT = 1
 
 # --- MAA & System Components ---
 config_path = resource_path("data/config.yml")
@@ -159,27 +161,27 @@ def save_song(name):
 
 def play_song():
     """
-    重构后的play_song函数，保留UI版的核心优化。
+    Core playback function with performance optimizations.
     """
     cmd_log_list.clear()
     reset_callback_data()
 
-    # STAGE 1: 等待游戏加载 (检测暂停按钮)
-    logging.info("==> [阶段1] 等待游戏加载，正在检测暂停按钮...")
+    # STAGE 1: Wait for the game to load by detecting the pause button
+    logging.info("==> [Stage 1] Waiting for game to load, detecting pause button...")
     CONFIDENCE_THRESHOLD = 0.9
     template_path = resource_path("assets/resource/image/live/button/pause.png")
     if not template_path.exists():
-        logging.error(f"暂停按钮模板图片未找到: {template_path}")
+        logging.error(f"Pause button template image not found: {template_path}")
         return
     template = cv2.imread(str(template_path), 0)
     if template is None:
-        logging.error(f"无法加载模板图片: {template_path}")
+        logging.error(f"Failed to load template image: {template_path}")
         return
     pause_button_found = False
     wait_start_time = time.time()
     while not pause_button_found:
         if time.time() - wait_start_time > 30:
-            logging.error("等待暂停按钮超时 (30秒)，演奏任务中止。")
+            logging.error("Timeout (30s) waiting for pause button. Aborting playback.")
             return
         screen = current_player.ipc_capture_display()
         height, width, _ = screen.shape
@@ -187,14 +189,14 @@ def play_song():
         gray_roi = cv2.cvtColor(roi_screen, cv2.COLOR_BGR2GRAY)
         result = cv2.matchTemplate(gray_roi, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, _ = cv2.minMaxLoc(result)
-        logging.info(f"等待暂停按钮... 匹配度: {max_val:.2f}")
+        logging.info(f"Waiting for pause button... match confidence: {max_val:.2f}")
         if max_val >= CONFIDENCE_THRESHOLD:
             pause_button_found = True
         else:
             time.sleep(0.5)
 
-    # STAGE 2 & 3: 等待画面静止 & 光电门检测
-    logging.info("==> [阶段2] 等待画面静止...")
+    # STAGE 2 & 3: Wait for screen to freeze & photogate detection
+    logging.info("==> [Stage 2] Waiting for screen to freeze...")
 
     def _adjust_offset():
         global callback_data
@@ -224,23 +226,23 @@ def play_song():
             cur_color, _ = get_color_eval_in_range(screen, from_row, to_row)
             if last_color is not None:
                 change_score = np.sum(np.abs(cur_color[:3].astype(int) - last_color[:3].astype(int)))
-                logging.info(f"颜色变化量: {change_score}")
+                logging.info(f"Color change delta: {change_score}")
                 if change_score > 3 and freezed:
-                    logging.info("==> [阶段3] 检测到第一个音符！开始演奏！")
+                    logging.info("==> [Stage 3] First note detected! Starting playback!")
                     time.sleep(PHOTOGATE_LATENCY / 1000)
                     break
                 elif not freezed:
                     waited_frames += 1
                 if not freezed and waited_frames >= 200:
                     freezed = True
-                    logging.info("画面已静止，光电门已准备就绪！")
+                    logging.info("Screen has frozen. Photogate is ready.")
             last_color = cur_color
         except Exception as e:
-            logging.error(f"在光电门检测期间发生错误: {e}")
+            logging.error(f"Error during photogate detection: {e}")
             time.sleep(0.1)
 
-    # STAGE 4: 命令执行循环
-    logging.info("==> [阶段4] 开始执行演奏指令...")
+    # STAGE 4: Command execution loop
+    logging.info("==> [Stage 4] Starting command execution...")
     while True:
         current_chart.command_builder.publish(mnt, block=False)
         wait_time = _get_wait_time()
@@ -291,23 +293,23 @@ def init_maa():
     maaresource.post_bundle("assets/resource").wait()
     Toolkit.init_option("./")
     adb_devices = Toolkit.find_adb_devices()
-    if not adb_devices: raise RuntimeError("未找到 ADB 设备。")
+    if not adb_devices: raise RuntimeError("No ADB devices found.")
     supported_devices = [d for d in adb_devices if
                          "mumu" in d.config.get("extras", {}) or "ld" in d.config.get("extras", {})]
-    if not supported_devices: raise RuntimeError("未找到支持的模拟器 (MuMu, 雷电)。")
+    if not supported_devices: raise RuntimeError("No supported emulators found (MuMu, LDPlayer).")
     device = supported_devices[0]
-    logging.info(f"正在使用设备: {device.name} at {device.address}")
+    logging.info(f"Using device: {device.name} at {device.address}")
     maacontroller = AdbController(adb_path=device.adb_path, address=device.address, config=device.config)
     if not maacontroller.post_connection().wait().succeeded:
-        raise RuntimeError(f"连接控制器到设备 {device.name} 失败。")
+        raise RuntimeError(f"Failed to connect controller to device {device.name}.")
     maatasker.bind(maaresource, maacontroller)
-    if not maatasker.inited: raise RuntimeError("初始化 MAA 任务模块失败。")
-    logging.info("MAA 初始化成功。")
+    if not maatasker.inited: raise RuntimeError("Failed to initialize MAA tasker module.")
+    logging.info("MAA initialized successfully.")
 
 
 def init_player_and_mnt():
     global current_player, mnt
-    if not device: raise RuntimeError("在初始化播放器之前 MAA 设备尚未初始化。")
+    if not device: raise RuntimeError("MAA device not initialized before initializing player.")
     extra_config = device.config["extras"]
     if "mumu" in extra_config:
         type_, config_key = "mumu", "mumu"
@@ -315,7 +317,7 @@ def init_player_and_mnt():
     elif "ld" in extra_config:
         type_, config_key = "ld", "ld"
     else:
-        raise RuntimeError(f"不支持的模拟器类型: {list(extra_config.keys())}")
+        raise RuntimeError(f"Unsupported emulator type: {list(extra_config.keys())}")
     player_config = extra_config[config_key]
     current_player = player.Player(type_, Path(player_config["path"]), player_config["index"])
     mnt = MNT(
@@ -323,18 +325,16 @@ def init_player_and_mnt():
         mnt_asset_path=resource_path("assets/minitouch_EvATive7"), callback=mnt_callback,
         adb_executor=str(device.adb_path.absolute()),
     )
-    logging.info(f"{type_} 播放器和 Minitouch 初始化成功。")
+    logging.info(f"{type_} player and Minitouch initialized successfully.")
 
 
-# =================================================================
-# ===================== MAA 自定义模块区域 =====================
-# =================================================================
+# --- MAA Custom Modules ---
 
 @maaresource.custom_recognition("UICheckFCStatusRecognition")
 class UICheckFCStatusRecognition(CustomRecognition):
     """
-    用于决策节点的自定义识别模块。
-    当检测到当前歌曲的“未FC”次数超限时，此识别成功。
+    Custom recognition module for decision nodes.
+    This recognition succeeds if the current song's "non-FC" count has reached the limit.
     """
 
     def analyze(self, context: Context, argv: CustomRecognition.AnalyzeArg):
@@ -347,28 +347,30 @@ class UICheckFCStatusRecognition(CustomRecognition):
 
         if count >= MAX_NOT_FC_COUNT:
             logging.warning(
-                f"条件检查：歌曲 '{current_song_name}' 未FC次数 ({count}) 已达上限。"
+                f"Condition check: Song '{current_song_name}' has reached the non-FC limit ({count})."
             )
             return self.AnalyzeResult([0, 0, 0, 0], str(count))
 
         return self.AnalyzeResult(None, "")
 
+
 @maaresource.custom_recognition("UISongRecognitionMedley")
 class UISongRecognitionMedley(CustomRecognition):
     def analyze(self, context: Context, argv: CustomRecognition.AnalyzeArg):
-        roi = [110, 545, 368, 29]  # 这里的ROI可能需要根据实际情况微调
+        # This ROI might need adjustment based on the actual screen layout.
+        roi = [110, 545, 368, 29]
 
         def ocr_and_match(model=None):
             try:
                 pipeline = {"_ocr_song": {"recognition": "OCR", "roi": roi, "only_rec": True}}
                 if model: pipeline["_ocr_song"]["model"] = model
                 ocr_text = context.run_recognition("_ocr_song", argv.image, pipeline).best_result.text
-                logging.info(f"OCR ({model or 'default'}) 原始文本: '{ocr_text}'")
+                logging.info(f"OCR ({model or 'default'}) raw text: '{ocr_text}'")
                 match = fuzzy_match_song(ocr_text)
-                logging.info(f"模糊匹配结果 ({model or 'default'}): {match}")
+                logging.info(f"Fuzzy match result ({model or 'default'}): {match}")
                 return match
             except Exception as e:
-                logging.error(f"OCR ({model or 'default'}) 执行失败: {e}")
+                logging.error(f"OCR ({model or 'default'}) execution failed: {e}")
                 return None
 
         results = [m for m in [ocr_and_match("ppocr_v3/ja_jp"), ocr_and_match()] if m]
@@ -376,7 +378,7 @@ class UISongRecognitionMedley(CustomRecognition):
         best_match = max(results, key=lambda x: x[1])
         if best_match and best_match[1] > 50:
             song_name = "[FULL] " + best_match[0] if IS_FULL_SONG else best_match[0]
-            logging.info(f"歌曲识别成功: '{song_name}' (置信度: {best_match[1]}%)")
+            logging.info(f"Song recognized: '{song_name}' (Confidence: {best_match[1]}%)")
             return self.AnalyzeResult(roi, song_name)
         return self.AnalyzeResult(None, "")
 
@@ -384,21 +386,22 @@ class UISongRecognitionMedley(CustomRecognition):
 @maaresource.custom_recognition("UISongRecognition")
 class UISongRecognition(CustomRecognition):
     def analyze(self, context: Context, argv: CustomRecognition.AnalyzeArg):
-        roi = [200, 332, 368, 29]  # 这里的ROI可能需要根据实际情况微调
+        # This ROI might need adjustment based on the actual screen layout.
+        roi = [200, 332, 368, 29]
 
         def ocr_and_match(model=None):
             try:
                 pipeline = {"_ocr_song": {"recognition": "OCR", "roi": roi, "only_rec": True}}
                 if model: pipeline["_ocr_song"]["model"] = model
                 ocr_text = context.run_recognition("_ocr_song", argv.image, pipeline).best_result.text
-                logging.info(f"OCR ({model or 'default'}) 原始文本: '{ocr_text}'")
+                logging.info(f"OCR ({model or 'default'}) raw text: '{ocr_text}'")
                 if "FULL" in ocr_text and not IS_FULL_SONG:
                     return None
                 match = fuzzy_match_song(ocr_text)
-                logging.info(f"模糊匹配结果 ({model or 'default'}): {match}")
+                logging.info(f"Fuzzy match result ({model or 'default'}): {match}")
                 return match
             except Exception as e:
-                logging.error(f"OCR ({model or 'default'}) 执行失败: {e}")
+                logging.error(f"OCR ({model or 'default'}) execution failed: {e}")
                 return None
 
         results = [m for m in [ocr_and_match("ppocr_v3/ja_jp"), ocr_and_match()] if m]
@@ -408,9 +411,8 @@ class UISongRecognition(CustomRecognition):
 
         if best_match and best_match[1] > 50:
             matched_song_name = best_match[0]
-            # 仅在非FULL歌曲或IS_FULL_SONG为True时继续
             song_name_to_return = "[FULL] " + matched_song_name if IS_FULL_SONG else matched_song_name
-            logging.info(f"歌曲识别成功: '{song_name_to_return}' (置信度: {best_match[1]}%)")
+            logging.info(f"Song recognized: '{song_name_to_return}' (Confidence: {best_match[1]}%)")
             return self.AnalyzeResult(roi, song_name_to_return)
 
         return self.AnalyzeResult(None, "")
@@ -430,7 +432,7 @@ class UIPlay(CustomAction):
             play_song()
             return self.RunResult(True)
         except Exception as e:
-            logging.error(f"歌曲演奏期间出错: {e}", exc_info=True)
+            logging.error(f"Error during song playback: {e}", exc_info=True)
             return self.RunResult(False)
 
 
@@ -464,22 +466,21 @@ class UISavePlayResult(CustomAction):
     def run(self, context, argv):
         global play_failed_times, not_fc_song_counts
 
-        # --- 优化：更稳健地处理 succeed 参数 ---
+        # Improved handling of the 'succeed' parameter.
         succeed = False
         param = argv.custom_action_param
         try:
             succeed = json.loads(param).get("succeed", False)
         except (json.JSONDecodeError, TypeError):
-            # 如果解析出错，保持 succeed 为 False
-            logging.error("解析 custom_action_param 失败。")
+            # If parsing fails, keep 'succeed' as False.
+            logging.error("Failed to parse custom_action_param.")
             succeed = False
 
-        # --- 原有逻辑保持不变 ---
         play_result = {}
         if succeed and argv.reco_detail and argv.reco_detail.best_result:
             try:
                 play_result = argv.reco_detail.best_result.detail
-                # "未 Full Combo" 逻辑
+                # "Not Full Combo" logic
                 is_not_fc = (
                         play_result.get("good", 0) > 0 or
                         play_result.get("bad", 0) > 0 or
@@ -489,17 +490,17 @@ class UISavePlayResult(CustomAction):
                     current_count = not_fc_song_counts.get(current_song_id, 0)
                     not_fc_song_counts[current_song_id] = current_count + 1
                     logging.warning(
-                        f"歌曲 '{current_song_name}' 未达成 Full Combo。"
-                        f"累计次数: {not_fc_song_counts[current_song_id]}"
+                        f"Song '{current_song_name}' did not achieve a Full Combo. "
+                        f"Total count: {not_fc_song_counts[current_song_id]}"
                     )
             except json.JSONDecodeError:
-                logging.error("解析演奏结果JSON失败。")
+                logging.error("Failed to parse play result JSON.")
                 play_result = {}
 
-        # 只有在明确失败时（例如演出失败、管线出错）才增加失败计数
+        # Increment failure count only on explicit failures (e.g., live failed, pipeline error).
         if not succeed:
             play_failed_times += 1
-            logging.info(f"记录一次任务失败，当前累计失败次数: {play_failed_times}")
+            logging.info(f"Recorded a task failure. Current failure count: {play_failed_times}")
 
         PlayRecord.create(
             play_time=int(time.time()), play_offset=OFFSET, result=play_result,
@@ -507,14 +508,13 @@ class UISavePlayResult(CustomAction):
         )
 
         if play_failed_times >= MAX_FAILED_TIMES:
-            logging.error(f"失败次数达到上限 ({MAX_FAILED_TIMES})，自动停止。")
+            logging.error(f"Failure limit reached ({MAX_FAILED_TIMES}). Stopping automatically.")
             context.run_action("stop")
 
         return self.RunResult(True)
 
-# =================================================================
-# ===================== 画面串流相关 (不变) =====================
-# =================================================================
+
+# --- Screen Streaming ---
 def _stream_loop(socketio):
     while streaming_active.is_set():
         try:
@@ -530,7 +530,7 @@ def _stream_loop(socketio):
             socketio.emit("update_frame", {"image": base64.b64encode(buffer).decode("utf-8")})
             time.sleep(1 / fps)
         except Exception as e:
-            logging.error(f"画面传输线程出错: {e}")
+            logging.error(f"Screen streaming thread error: {e}")
             time.sleep(1)
 
 
@@ -556,10 +556,8 @@ def stop_streaming():
     streaming_thread = None
 
 
-# =================================================================
-# ===================== 任务启动函数区域 =====================
-# =================================================================
-def init(log_callback=None):
+# --- Task Entrypoints ---
+def init():
     try:
         init_maa()
         init_player_and_mnt()
@@ -568,7 +566,7 @@ def init(log_callback=None):
 
 
 def run_simplified_autodori(config_data):
-    """单曲模式：只打一首歌就停止。"""
+    """Single song mode: Plays one song and then stops."""
     global DIFFICULTY, IS_FULL_SONG, HUMAN_DELAY_ENABLED
     DIFFICULTY = config_data.get("difficulty", "expert")
     IS_FULL_SONG = config_data.get("is_full_song", False)
@@ -582,19 +580,29 @@ def run_simplified_autodori(config_data):
                       "template": "live/button/live_medley.png", "threshold": 0.5},
         "playsong": {"action": "Custom", "custom_action": "UIPlay", "next": ["stop"], "timeout": 500000},
     }
-    logging.info("正在提交【单曲模式】自动演奏任务...")
+    logging.info("Submitting Single Song Mode auto-play task...")
     maatasker.post_task("ui_simplified_entry", override_pipeline).wait()
-    logging.info("【单曲模式】自动演奏任务完成。")
+    logging.info("Single Song Mode auto-play task finished.")
 
 
 def run_full_auto_mode(config_data):
-    """【V11 Not-FC优化版】全自动模式，增加失败停止、未FC计数与跳过功能。"""
-    global DIFFICULTY, IS_FULL_SONG, HUMAN_DELAY_ENABLED, play_failed_times, not_fc_song_counts
+    """Full auto mode with failure stop and non-FC skip functionality."""
+    global DIFFICULTY, IS_FULL_SONG, HUMAN_DELAY_ENABLED, play_failed_times, not_fc_song_counts, MAX_NOT_FC_COUNT
+
     DIFFICULTY = config_data.get("difficulty", "hard")
     IS_FULL_SONG = config_data.get("is_full_song", False)
     HUMAN_DELAY_ENABLED = config_data.get("human_delay", False)
+
+    # Get the value from config_data and update the global variable
+    # Use .get() with a default value of 1 for safety
+    MAX_NOT_FC_COUNT = config_data.get("max_not_fc_count", 1)
+
     play_failed_times = 0
-    not_fc_song_counts.clear()  # 每次运行时重置计数器
+    not_fc_song_counts.clear()
+
+    # Add a log to confirm the setting was received
+    logging.info(f"Non-FC Skip Limit set to: {MAX_NOT_FC_COUNT}")
+
     if not maacontroller or not mnt: raise RuntimeError("MAA is not initialized.")
 
     pipeline_def_path = resource_path("assets/resource/pipeline")
@@ -608,7 +616,7 @@ def run_full_auto_mode(config_data):
     ]
 
     override_pipeline = {
-        # --- 选曲流程 (已重构为 on_error 分支逻辑) ---
+        # --- Song Selection Flow ---
         "select_song_entry": {
             **live_pipeline_def["select_song"],
             "next": "get_song_name",
@@ -616,10 +624,10 @@ def run_full_auto_mode(config_data):
         "get_song_name": {
             "recognition": "Custom", "custom_recognition": "UISongRecognition",
             "action": "Custom", "custom_action": "UISaveSong",
-            "next": ["decide_play_or_skip","click_confirm_on_song_select"],
+            "next": ["decide_play_or_skip", "click_confirm_on_song_select"],
             "timeout": 15000,
         },
-        # 新增：决策节点
+        # Decision node
         "decide_play_or_skip": {
             "recognition": "Custom",
             "custom_recognition": "UICheckFCStatusRecognition",
@@ -645,10 +653,10 @@ def run_full_auto_mode(config_data):
             "next": ["playsong"]
         },
 
-        # --- 演奏及后续流程 ---
+        # --- Playback and Post-Live Flow ---
         "playsong": {
             "action": "Custom", "custom_action": "UIPlay",
-            "next": ["wait_for_result_screen"],  # 修改：指向优化后的单一等待节点
+            "next": ["wait_for_result_screen"],
             "timeout": 500000,
             "on_error": ["save_failed_result"],
             "interrupt": [
@@ -666,7 +674,7 @@ def run_full_auto_mode(config_data):
             "next": ["stop"],
         },
 
-        # --- 优化后的结算流程 ---
+        # --- Optimized Results Screen Flow ---
         "wait_for_result_screen": {
             "recognition": "TemplateMatch",
             "template": [
@@ -687,7 +695,7 @@ def run_full_auto_mode(config_data):
             "next": ["liveagain"],
             "timeout": 30000,
             "on_error": ["stop"],
-            "interrupt": result_screen_interrupts  # 假设 result_screen_interrupts 已定义
+            "interrupt": result_screen_interrupts
         },
         "save_failed_result": {
             "action": "Custom", "custom_action": "UISavePlayResult",
@@ -700,9 +708,9 @@ def run_full_auto_mode(config_data):
             "interrupt": result_screen_interrupts
         },
     }
-    # 将所有通用定义合并到管线中，以便覆盖
+    # Merge common definitions into the pipeline
     override_pipeline.update(common_pipeline_def)
 
-    logging.info("正在提交【V11 Not-FC优化版】自动演奏任务...")
+    logging.info("Submitting Full Auto Mode auto-play task...")
     maatasker.post_task("select_song_entry", override_pipeline).wait()
-    logging.info("【V11 Not-FC优化版】自动演奏任务完成或已停止。")
+    logging.info("Full Auto Mode auto-play task finished or stopped.")

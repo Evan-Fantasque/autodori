@@ -85,6 +85,11 @@ class AutodoriGUI:
         ttk.Combobox(options_frame, textvariable=self.difficulty_var,
                      values=['easy', 'normal', 'hard', 'expert', 'special'], width=10).pack(side=tk.LEFT, padx=5)
 
+        ttk.Label(options_frame, text="未FC跳过阈值：").pack(side=tk.LEFT, padx=5)
+        # Add a variable to hold the value
+        self.max_not_fc_var = tk.IntVar(value=1)
+        ttk.Spinbox(options_frame, from_=1, to=99, textvariable=self.max_not_fc_var, width=5).pack(side=tk.LEFT, padx=5)
+
         # --- 修改：为复选框和警示标签创建独立的容器 ---
         # 1. 支持FULL曲
         full_song_frame = ttk.Frame(options_frame)
@@ -129,16 +134,18 @@ class AutodoriGUI:
             pass
         self.master.after(100, self._process_log_queue)
 
+    # In gui.py -> AutodoriGUI -> start_bot
     def start_bot(self):
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
 
-        # 修改：从UI收集所有配置，打包成一个字典
         config_data = {
             "mode": self.mode_var.get(),
             "difficulty": self.difficulty_var.get(),
             "is_full_song": self.isfull_var.get(),
-            "human_delay": self.human_var.get()
+            "human_delay": self.human_var.get(),
+            # Add the new value here
+            "max_not_fc_count": self.max_not_fc_var.get()
         }
 
         self.bot_thread = threading.Thread(target=self._run_bot_task, args=(config_data,), daemon=True)
