@@ -103,7 +103,7 @@ class AutodoriGUI:
         # --- 修改: 将警告标签的父组件改为 warnings_frame ---
         self.full_song_warning_label = ttk.Label(warnings_frame, text="警告：成功率极低，绝对不要对没有FULL的歌曲使用", style="Warning.TLabel")
 
-        # 2. 类人延迟
+        # 2. 随机化
         human_delay_frame = ttk.Frame(options_frame)
         human_delay_frame.pack(side=tk.LEFT, padx=10)
         ttk.Checkbutton(human_delay_frame, text="随机化按键", variable=self.human_var).pack(side=tk.LEFT)
@@ -194,7 +194,7 @@ class AutodoriGUI:
         else:
             self.full_song_warning_label.pack_forget()
 
-        # 检查 "类人延迟" 的状态
+        # 检查 "随机化" 的状态
         if self.human_var.get():
             if not self.human_delay_warning_label.winfo_exists() or not self.human_delay_warning_label.winfo_ismapped():
                 # 修改: 使用 anchor='w' 让文本在垂直容器内左对齐
