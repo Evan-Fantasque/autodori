@@ -167,7 +167,7 @@ def play_song():
     reset_callback_data()
 
     # STAGE 1: Wait for the game to load by detecting the pause button
-    logging.info("==> [Stage 1] Waiting for game to load, detecting pause button...")
+    logging.info("Waiting for game to load, detecting pause button...")
     CONFIDENCE_THRESHOLD = 0.9
     template_path = resource_path("assets/resource/image/live/button/pause.png")
     if not template_path.exists():
@@ -189,14 +189,14 @@ def play_song():
         gray_roi = cv2.cvtColor(roi_screen, cv2.COLOR_BGR2GRAY)
         result = cv2.matchTemplate(gray_roi, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, _ = cv2.minMaxLoc(result)
-        logging.info(f"Waiting for pause button... match confidence: {max_val:.2f}")
+        logging.debug(f"Waiting for pause button... match confidence: {max_val:.2f}")
         if max_val >= CONFIDENCE_THRESHOLD:
             pause_button_found = True
         else:
             time.sleep(0.5)
 
     # STAGE 2 & 3: Wait for screen to freeze & photogate detection
-    logging.info("==> [Stage 2] Waiting for screen to freeze...")
+    logging.info("Waiting for screen to freeze...")
 
     def _adjust_offset():
         global callback_data
@@ -226,9 +226,9 @@ def play_song():
             cur_color, _ = get_color_eval_in_range(screen, from_row, to_row)
             if last_color is not None:
                 change_score = np.sum(np.abs(cur_color[:3].astype(int) - last_color[:3].astype(int)))
-                logging.info(f"Color change delta: {change_score}")
+                logging.debug(f"Color change delta: {change_score}")
                 if change_score > 3 and freezed:
-                    logging.info("==> [Stage 3] First note detected! Starting playback!")
+                    logging.info("First note detected, starting playback.")
                     time.sleep(PHOTOGATE_LATENCY / 1000)
                     break
                 elif not freezed:
@@ -242,7 +242,7 @@ def play_song():
             time.sleep(0.1)
 
     # STAGE 4: Command execution loop
-    logging.info("==> [Stage 4] Starting command execution...")
+    logging.info("Starting command execution...")
     while True:
         current_chart.command_builder.publish(mnt, block=False)
         wait_time = _get_wait_time()
