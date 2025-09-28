@@ -10,21 +10,36 @@ from playhouse.sqlite_ext import JSONField
 
 import util
 from api import BestdoriAPI
+import json
+import datetime
 
 
-class PlayRecord(Model):
-    class Meta:
-        database = SqliteDatabase("data/play_records.db")
-
-    play_time = TimestampField()
-    play_offset = JSONField()
-    chart_id = CharField()
-    difficulty = CharField()
-    succeed = BooleanField()
-    result = JSONField()
-
-
-PlayRecord.create_table(safe=True)
+class PlayRecord:
+    _save_path = Path("data/play_records.jsonl")
+    @classmethod
+    def create(cls, **kwargs):
+        """
+        接收数据并将其作为新的一行追加到 .jsonl 文件中。
+        参数 (**kwargs) 应该包含:
+        play_time, play_offset, chart_id, difficulty, succeed, result
+        """
+        # 1. 确保数据目录存在
+        cls._save_path.parent.mkdir(exist_ok=True)
+        # 2. 准备要保存的数据字典
+        # 我们直接使用传入的kwargs，并可以补充一些易读信息
+        record = kwargs.copy()
+        # 将Unix时间戳转换为人类可读的ISO格式字符串
+        record['play_time_iso'] = datetime.datetime.fromtimestamp(record['play_time']).isoformat()
+        try:
+            # 3. 将字典转换为紧凑的JSON字符串
+            # ensure_ascii=False 确保非英文字符能正确保存
+            # separators 可以移除不必要的空格，让每行更紧凑
+            json_line = json.dumps(record, ensure_ascii=False, separators=(',', ':'))
+            # 4. 以追加模式打开文件，并将JSON字符串作为新行写入
+            with open(cls._save_path, 'a', encoding='utf-8') as f:
+                f.write(json_line + '\n')
+        except Exception as e:
+            logging.error(f"将演奏记录写入到 {cls._save_path} 时发生错误: {e}")
 
 
 class Chart:
