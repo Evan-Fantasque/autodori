@@ -116,9 +116,7 @@ class Chart:
                     if not connection.get("hidden", False):
                         connection["checkpoint_index"] = get_checkpoint_index()
             else:
-                self._logger.warning(
-                    f"_chart_to_time_chart: Unknown type: {note_type}, Skipped"
-                )
+                pass
         self._logger.debug(
             f"_chart_to_time_chart: Succeed: {len(self._chart_data)} notes"
         )

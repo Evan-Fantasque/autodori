@@ -59,13 +59,17 @@ PHOTOGATE_LATENCY = 30
 DEFAULT_MOVE_SLICE_SIZE = 10
 CMD_SLICE_SIZE = 100
 HUMAN_DELAY_ENABLED = True
-MAX_FAILED_TIMES = 10
+MAX_CONTINUOUS_FAILED_TIMES = 10
 play_failed_times: int = 0
 
 # Global variable to track songs that were not Full Combo'd.
 not_fc_song_counts: dict[str, int] = {}
 # A song will be skipped after failing to achieve a Full Combo this many times.
 MAX_NOT_FC_COUNT = 1
+
+# Playback monitor thread
+stop_event = threading.Event()
+playback_started_event = threading.Event()
 
 # --- MAA & System Components ---
 config_path = resource_path("data/config.yml")
@@ -159,7 +163,61 @@ def save_song(name):
     logging.info(f"Saved song: {name}")
 
 
-def play_song():
+def monitor_failure_thread(stop_event, playback_started_event):
+    """
+    A background monitoring thread.
+    It waits for the playback start signal, then continuously monitors for the "Live Failed" screen through image matching.
+    """
+    try:
+        logging.info("Monitor thread started, waiting for playback start signal...")
+
+        # Wait for "playback started" signal from play_song function, timeout after 60s
+        playback_started_event.wait(timeout=30)
+
+        if not playback_started_event.is_set():
+            logging.warning("Timeout waiting for playback start signal, monitor thread exiting.")
+            return
+
+        logging.info("Received playback start signal, starting screen monitoring.")
+
+        # Load template image once for efficiency
+        # Note: Please ensure this path matches your project resource path
+        fail_template_path = resource_path("assets/resource/image/live/live_failed.png")
+        if not fail_template_path.exists():
+            logging.error(
+                f"Live Failed template image not found: {fail_template_path}, monitor thread cannot work.")
+            return
+
+        template = cv2.imread(str(fail_template_path), 0)
+        CONFIDENCE_THRESHOLD = 0.8
+
+        # Monitor loop until stop signal received
+        while not stop_event.is_set():
+            screen_bgr = current_player.ipc_capture_display()
+            if screen_bgr is None:
+                time.sleep(1)
+                continue
+
+            screen_gray = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2GRAY)
+
+            # Perform template matching
+            result = cv2.matchTemplate(screen_gray, template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(result)
+
+            if max_val >= CONFIDENCE_THRESHOLD:
+                logging.error(f"Detected 'Live Failed' screen (match: {max_val:.2f})! Sending stop signal!")
+                stop_event.set()  # Key: Set stop event to notify other threads
+                break  # Task complete, exit loop
+
+            # Monitor every 1s to avoid high CPU usage
+            time.sleep(1)
+
+    except Exception as e:
+        logging.error(f"Monitor thread encountered unexpected error: {e}", exc_info=True)
+    finally:
+        logging.info("Monitor thread terminated.")
+
+def play_song(stop_event, playback_started_event):
     """
     Core playback function with performance optimizations.
     """
@@ -242,8 +300,12 @@ def play_song():
             time.sleep(0.1)
 
     # STAGE 4: Command execution loop
+    playback_started_event.set()
     logging.info("Starting command execution...")
     while True:
+        if stop_event.is_set():
+            logging.warning("Playback failed, exiting.")
+            return
         current_chart.command_builder.publish(mnt, block=False)
         wait_time = _get_wait_time()
         time.sleep(max(0, wait_time - 3) / 1000)
@@ -256,8 +318,6 @@ def play_song():
         else:
             break
     logging.info("Playback finished.")
-    time.sleep(2)
-
 
 def mnt_callback(event: MNTEvent, data: MNTEventData):
     global callback_data
@@ -395,7 +455,7 @@ class UISongRecognition(CustomRecognition):
                 if model: pipeline["_ocr_song"]["model"] = model
                 ocr_text = context.run_recognition("_ocr_song", argv.image, pipeline).best_result.text
                 logging.info(f"OCR ({model or 'default'}) raw text: '{ocr_text}'")
-                if "FULL" in ocr_text and not IS_FULL_SONG:
+                if "FULL" in ocr_text:
                     return None
                 match = fuzzy_match_song(ocr_text)
                 logging.info(f"Fuzzy match result ({model or 'default'}): {match}")
@@ -404,16 +464,18 @@ class UISongRecognition(CustomRecognition):
                 logging.error(f"OCR ({model or 'default'}) execution failed: {e}")
                 return None
 
-        results = [m for m in [ocr_and_match("ppocr_v3/ja_jp"), ocr_and_match()] if m]
-        if not results: return self.AnalyzeResult(None, "")
+        jp_match = ocr_and_match("ppocr_v3/ja_jp")
+        common_match = ocr_and_match()
+        if not jp_match or not common_match:
+            return self.AnalyzeResult(None, "")
+        results = [jp_match, common_match]
 
         best_match = max(results, key=lambda x: x[1])
 
         if best_match and best_match[1] > 50:
             matched_song_name = best_match[0]
-            song_name_to_return = "[FULL] " + matched_song_name if IS_FULL_SONG else matched_song_name
-            logging.info(f"Song recognized: '{song_name_to_return}' (Confidence: {best_match[1]}%)")
-            return self.AnalyzeResult(roi, song_name_to_return)
+            logging.info(f"Song recognized: '{matched_song_name}' (Confidence: {best_match[1]}%)")
+            return self.AnalyzeResult(roi, matched_song_name)
 
         return self.AnalyzeResult(None, "")
 
@@ -428,12 +490,25 @@ class UISaveSong(CustomAction):
 @maaresource.custom_action("UIPlay")
 class UIPlay(CustomAction):
     def run(self, context, argv):
+        global stop_event, playback_started_event
+        stop_event.clear()
+        playback_started_event.clear()
+        monitor = threading.Thread(
+            target=monitor_failure_thread,
+            args=(stop_event, playback_started_event),
+            daemon=True
+        )
         try:
-            play_song()
+            monitor.start()
+            play_song(stop_event,playback_started_event)
+            stop_event.set()
             return self.RunResult(True)
         except Exception as e:
+            stop_event.set()
             logging.error(f"Error during song playback: {e}", exc_info=True)
             return self.RunResult(False)
+        finally:
+            monitor.join(timeout=5)
 
 
 @maaresource.custom_recognition("UIPlayResult")
@@ -498,17 +573,23 @@ class UISavePlayResult(CustomAction):
                 play_result = {}
 
         # Increment failure count only on explicit failures (e.g., live failed, pipeline error).
-        if not succeed:
+        if succeed:
+            # If task is successful and there were previous failures, log and reset counter
+            if play_failed_times > 0:
+                logging.info(f"Task successful, resetting continuous failure count from {play_failed_times} to zero.")
+            play_failed_times = 0
+        else:  # 'not succeed' case
+            # If task failed, increment counter unconditionally 
             play_failed_times += 1
-            logging.info(f"Recorded a task failure. Current failure count: {play_failed_times}")
+            logging.info(f"Recording one task failure, current continuous failure count: {play_failed_times}")
 
         PlayRecord.create(
             play_time=int(time.time()), play_offset=OFFSET, result=play_result,
             succeed=succeed, chart_id=current_song_id, difficulty=DIFFICULTY,
         )
 
-        if play_failed_times >= MAX_FAILED_TIMES:
-            logging.error(f"Failure limit reached ({MAX_FAILED_TIMES}). Stopping automatically.")
+        if play_failed_times >= MAX_CONTINUOUS_FAILED_TIMES:
+            logging.error(f"Continuous failure limit reached ({MAX_CONTINUOUS_FAILED_TIMES}). Stopping automatically.")
             context.run_action("stop")
 
         return self.RunResult(True)
@@ -617,13 +698,15 @@ def run_full_auto_mode(config_data):
 
     override_pipeline = {
         # --- Song Selection Flow ---
-        "select_song_entry": {
+        "select_song": {
             **live_pipeline_def["select_song"],
-            "next": "get_song_name",
+            "next": ["get_song_name","random_choice_song_action"],
         },
         "get_song_name": {
-            "recognition": "Custom", "custom_recognition": "UISongRecognition",
-            "action": "Custom", "custom_action": "UISaveSong",
+            "recognition": "Custom",
+            "custom_recognition": "UISongRecognition",
+            "action": "Custom",
+            "custom_action": "UISaveSong",
             "next": ["decide_play_or_skip", "click_confirm_on_song_select"],
             "timeout": 15000,
         },
@@ -635,21 +718,42 @@ def run_full_auto_mode(config_data):
         },
         "random_choice_song_action": {
             **live_pipeline_def["random_choice_song"],
-            "next": ["select_song_entry"]
+            "next": ["select_song"]
         },
         "click_confirm_on_song_select": {
             **common_pipeline_def["confirm_button"],
             "next": ["wait_for_final_confirmation"]
         },
         "wait_for_final_confirmation": {
-            **live_pipeline_def["comfirm_song"],
-            "next": ["disable_liveplay"],
+            "recognition": "OCR",
+            "expected": [
+                "选择乐队",
+                "最终确认"
+            ],
+            "timeout": 3000,
+            "next": [
+                "disable_liveplay"
+            ],
+            "interrupt": [
+                "switch_liveplay_mode"
+            ]
         },
         "disable_liveplay": {
             **live_pipeline_def["disable_liveplay"],
+            "next": "startlive",
         },
         "startlive": {
-            **live_pipeline_def["startlive"],
+            "action": "Click",
+            "recognition": "TemplateMatch",
+            "pre_wait_freezes": {"time": 3000},
+            "template": "live/button/startlive.png",
+            "interrupt": [
+                "startlive",
+                "confirm_button",
+                "login_expired",
+                "connect_failed"
+            ],
+            "post_delay": 2000,
             "next": ["playsong"]
         },
 
@@ -658,7 +762,6 @@ def run_full_auto_mode(config_data):
             "action": "Custom", "custom_action": "UIPlay",
             "next": ["wait_for_result_screen"],
             "timeout": 500000,
-            "on_error": ["save_failed_result"],
             "interrupt": [
                 "live_failed_handler", "next_button", "close_button", "ok_button",
                 "confirm_button", "login_expired", "connect_failed"
@@ -666,14 +769,25 @@ def run_full_auto_mode(config_data):
         },
         "live_failed_handler": {
             **live_pipeline_def["live_failed"],
-            "next": ["save_failed_result_and_stop"]
         },
-        "save_failed_result_and_stop": {
-            "action": "Custom", "custom_action": "UISavePlayResult",
+        "save_failed_playresult": {
+            "action": "Custom",
+            "custom_action": "UISavePlayResult",
             "custom_action_param": {"succeed": False},
-            "next": ["stop"],
+            "next": "live_home_button",
+            "interrupt": [
+                "exit_button"
+            ]
         },
-
+        "select_live_mode": {
+                "recognition": "OCR",
+                "expected": "自由演出",
+                "roi": [679, 183, 257, 354],
+                "action": "Click",
+                "post_delay": 1000,
+                "next": ["select_song", "select_live_mode", "live_home_button"],
+                "interrupt": ["login_expired", "connect_failed"],
+        },
         # --- Optimized Results Screen Flow ---
         "wait_for_result_screen": {
             "recognition": "TemplateMatch",
@@ -681,12 +795,22 @@ def run_full_auto_mode(config_data):
                 "live/scored.png",
                 "live/activity_scored.png"
             ],
-            "pre_wait_freezes": {"threshold": 0.9, "time": 3000},
-            "next": ["get_result"],
+            "pre_wait_freezes": {"threshold": 0.65, "time": 5000},
+            "next": ["wait_playresult"],
             "interrupt": [
                 "live_failed_handler", "next_button", "close_button",
                 "ok_button", "confirm_button"
-            ]
+            ],
+            "post_delay": 3000
+        },
+        "wait_playresult": {
+            "recognition": "TemplateMatch",
+            "template": [
+                "live/scored.png",
+                "live/activity_scored.png"
+            ],
+            "pre_wait_freezes": 2000,
+            "next": "get_result"
         },
         "get_result": {
             "recognition": "Custom", "custom_recognition": "UIPlayResult",
@@ -697,14 +821,9 @@ def run_full_auto_mode(config_data):
             "on_error": ["stop"],
             "interrupt": result_screen_interrupts
         },
-        "save_failed_result": {
-            "action": "Custom", "custom_action": "UISavePlayResult",
-            "custom_action_param": {"succeed": False},
-            "next": ["liveagain"],
-        },
         "liveagain": {
             **live_pipeline_def["liveagain"],
-            "next": ["select_song_entry"],
+            "next": ["select_song"],
             "interrupt": result_screen_interrupts
         },
     }
@@ -712,5 +831,5 @@ def run_full_auto_mode(config_data):
     override_pipeline.update(common_pipeline_def)
 
     logging.info("Submitting Full Auto Mode auto-play task...")
-    maatasker.post_task("select_song_entry", override_pipeline).wait()
+    maatasker.post_task("select_song", override_pipeline).wait()
     logging.info("Full Auto Mode auto-play task finished or stopped.")
