@@ -209,9 +209,9 @@ class AutodoriGUI:
         mode_frame = ttk.Frame(config_frame)
         mode_frame.pack(fill=tk.X, padx=2, pady=2)
         ttk.Label(mode_frame, text="模式:").pack(side=tk.LEFT)
-        ttk.Radiobutton(mode_frame, text="单曲模式", variable=self.mode_var, value='single').pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(mode_frame, text="全自动模式", variable=self.mode_var, value='full_auto').pack(side=tk.LEFT,
-                                                                                                       padx=5)
+        # --- 修改：为Radiobutton添加command回调 ---
+        ttk.Radiobutton(mode_frame, text="单曲模式", variable=self.mode_var, value='single', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="全自动模式", variable=self.mode_var, value='full_auto', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
 
         warnings_frame = ttk.Frame(mode_frame)
         warnings_frame.pack(side=tk.RIGHT, padx=(10, 0))
@@ -220,24 +220,29 @@ class AutodoriGUI:
         options_frame.pack(fill=tk.X, padx=2, pady=2)
 
         ttk.Label(options_frame, text="难度:").pack(side=tk.LEFT)
-        ttk.Combobox(options_frame, textvariable=self.difficulty_var,
-                     values=['easy', 'normal', 'hard', 'expert', 'special'], width=10).pack(side=tk.LEFT, padx=3)
+        # --- 修改：将控件保存为实例变量，用于定位 ---
+        self.difficulty_combobox = ttk.Combobox(options_frame, textvariable=self.difficulty_var,
+                                                values=['easy', 'normal', 'hard', 'expert', 'special'], width=10)
+        self.difficulty_combobox.pack(side=tk.LEFT, padx=3)
 
-        ttk.Label(options_frame, text="未FC跳过阈值：").pack(side=tk.LEFT, padx=(5, 0))
-        ttk.Spinbox(options_frame, from_=1, to=99, textvariable=self.max_not_fc_var, width=5).pack(side=tk.LEFT, padx=3)
+        # --- 修改：将FC相关控件放入独立的Frame中 ---
+        self.fc_options_frame = ttk.Frame(options_frame)
+        ttk.Label(self.fc_options_frame, text="未FC跳过阈值：").pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Spinbox(self.fc_options_frame, from_=1, to=99, textvariable=self.max_not_fc_var, width=5).pack(side=tk.LEFT, padx=3)
+        ttk.Label(self.fc_options_frame, text="最大尝试次数：").pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Spinbox(self.fc_options_frame, from_=1, to=99, textvariable=self.max_attempt_var, width=5).pack(side=tk.LEFT, padx=3)
 
-        ttk.Label(options_frame, text="最大尝试次数：").pack(side=tk.LEFT, padx=(5, 0))
-        ttk.Spinbox(options_frame, from_=1, to=99, textvariable=self.max_attempt_var, width=5).pack(side=tk.LEFT, padx=3)
+        # --- 修改：将FULL曲控件放入独立的Frame中 ---
+        self.full_song_frame = ttk.Frame(options_frame)
+        ttk.Checkbutton(self.full_song_frame, text="支持FULL曲", variable=self.isfull_var).pack(side=tk.LEFT)
 
-        full_song_frame = ttk.Frame(options_frame)
-        full_song_frame.pack(side=tk.LEFT, padx=5)
-        ttk.Checkbutton(full_song_frame, text="支持FULL曲", variable=self.isfull_var).pack(side=tk.LEFT)
+        self.human_delay_frame = ttk.Frame(options_frame)
+        self.human_delay_frame.pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(self.human_delay_frame, text="随机化按键", variable=self.human_var).pack(side=tk.LEFT)
+
+        # 警告标签
         self.full_song_warning_label = ttk.Label(warnings_frame, text="警告：成功率极低，请勿对没有FULL谱的歌曲使用",
                                                  style="Warning.TLabel")
-
-        human_delay_frame = ttk.Frame(options_frame)
-        human_delay_frame.pack(side=tk.LEFT, padx=5)
-        ttk.Checkbutton(human_delay_frame, text="随机化按键", variable=self.human_var).pack(side=tk.LEFT)
         self.human_delay_warning_label = ttk.Label(warnings_frame, text="警告：可能导致不能FC", style="Warning.TLabel")
 
         self.bg_color = style.lookup("TFrame", "background")
@@ -262,6 +267,22 @@ class AutodoriGUI:
 
         self.paned_window.bind("<ButtonPress-1>", self._prevent_resize)
         self.paned_window.bind("<B1-Motion>", self._prevent_resize)
+
+        # --- 新增：在UI创建完成后，调用一次模式切换函数来设置初始状态 ---
+        self._on_mode_change()
+
+    # --- 新增方法：用于根据模式动态显示/隐藏UI控件 ---
+    def _on_mode_change(self):
+        """当模式（单曲/全自动）切换时，动态显示或隐藏相关配置项。"""
+        mode = self.mode_var.get()
+        if mode == 'full_auto':
+            # 在全自动模式下：显示FC相关设置，隐藏FULL曲选项
+            self.full_song_frame.pack_forget()
+            self.fc_options_frame.pack(side=tk.LEFT, after=self.difficulty_combobox)
+        elif mode == 'single':
+            # 在单曲模式下：隐藏FC相关设置，显示FULL曲选项
+            self.fc_options_frame.pack_forget()
+            self.full_song_frame.pack(side=tk.LEFT, after=self.difficulty_combobox)
 
     def _create_globals_tab(self, parent_frame):
         """填充“全局变量调试”选项卡的内容"""
