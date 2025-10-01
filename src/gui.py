@@ -279,6 +279,7 @@ class AutodoriGUI:
             # 在全自动模式下：显示FC相关设置，隐藏FULL曲选项
             self.full_song_frame.pack_forget()
             self.fc_options_frame.pack(side=tk.LEFT, after=self.difficulty_combobox)
+            self.isfull_var.set(False)
         elif mode == 'single':
             # 在单曲模式下：隐藏FC相关设置，显示FULL曲选项
             self.fc_options_frame.pack_forget()
