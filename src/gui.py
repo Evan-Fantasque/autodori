@@ -277,7 +277,6 @@ class AutodoriGUI:
             'FREEZE_SLEEP_TIME': float,
             'CONFIDENCE_THRESHOLD_FAILURE': float,
             'CONFIDENCE_THRESHOLD_PLAY': float,
-            'MAX_SONG_ATTEMPTS': int
         }
 
         # --- 新增：本地化文本映射 ---
@@ -292,7 +291,6 @@ class AutodoriGUI:
             'FREEZE_SLEEP_TIME': "画面静止检测间隔时间 (s)",
             'CONFIDENCE_THRESHOLD_FAILURE': "失败检测置信度",
             'CONFIDENCE_THRESHOLD_PLAY': "歌曲开始检测置信度",
-            'MAX_SONG_ATTEMPTS':"歌曲最大尝试次数"
         }
 
         # 使用 grid 布局
