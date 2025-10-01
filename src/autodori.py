@@ -73,7 +73,7 @@ all_song_name_indexes: dict[str, str] = {
 current_song_name: str = None
 current_song_id: str = None
 current_chart: Chart = None
-play_failed_times: int = 0
+PLAY_FAILED_TIMES: int = 0
 callback_data: dict = {}
 callback_data_lock = threading.Lock()
 cmd_log_list: list[MNTEvATive7LogEventData] = []
@@ -269,7 +269,7 @@ class PlayResultRecognition(CustomRecognition):
 class SavePlayResult(CustomAction):
     def run(self, context: Context, argv: CustomAction.RunArg):
         try:
-            global current_song_id, play_failed_times
+            global current_song_id, PLAY_FAILED_TIMES
             succeed: bool = json.loads(argv.custom_action_param).get("succeed")
             if succeed:
                 playresult = argv.reco_detail.best_result.detail

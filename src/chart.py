@@ -343,7 +343,7 @@ class Chart:
                     }
                 )
             else:
-                logging.warning(f"notes_to_actions: Unknown type: {note_type}")
+                logging.debug(f"notes_to_actions: Unknown type: {note_type}")
 
         actions.sort(key=lambda x: x["time"])
         actions: list[dict]

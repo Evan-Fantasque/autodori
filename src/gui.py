@@ -1,7 +1,13 @@
 import logging
+import os
 import queue
+import subprocess
+import sys
 import threading
+import time
 import tkinter as tk
+from functools import partial
+from tkinter import messagebox
 from tkinter import scrolledtext
 from tkinter import ttk
 
@@ -41,11 +47,46 @@ class AutodoriGUI:
         self.isfull_var.trace_add('write', self._update_warnings)
         self.human_var.trace_add('write', self._update_warnings)
 
-        # --- 日志队列 ---
+        # --- 设置日志队列 (用于GUI显示) ---
         self.log_queue = queue.Queue()
+        queue_handler = QueueHandler(self.log_queue)
+        # 注意：这里我们不再对 queue_handler 设置格式，让根记录器统一处理
+
+        # --- 新增：设置文件日志 (用于输出到文件) ---
+        debug_folder = "debug"
+        os.makedirs(debug_folder, exist_ok=True)  # 创建debug文件夹
+
+        # 创建带时间戳的日志文件名
+        log_filename = f"autodori_{time.strftime('%Y%m%d-%H%M%S')}.log"
+        log_filepath = os.path.join(debug_folder, log_filename)
+
+        # 创建文件处理器，指定路径和编码
+        file_handler = logging.FileHandler(log_filepath, encoding='utf-8')
+
+        # --- 配置根记录器 (Logger) ---
+        # 获取根记录器
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)  # 设置日志级别
+
+        # 创建一个通用的日志格式
+        formatter = logging.Formatter('%(asctime)s - [%(levelname)s] - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+
+        # 为两个处理器设置相同的格式
+        queue_handler.setFormatter(formatter)
+        file_handler.setFormatter(formatter)
+
+        # 将两个处理器都添加到根记录器中
+        root_logger.addHandler(queue_handler)
+        root_logger.addHandler(file_handler)
+
+        # --- 启动日志处理循环 ---
+        self.master.after(100, self._process_log_queue)
 
         # --- 修改：不再立即创建控件，而是先显示欢迎界面 ---
         self._create_disclaimer_view()
+
+        # --- 新增：用于存储全局变量UI控件的变量 ---
+        self.global_vars_entries = {}
 
     def _create_disclaimer_view(self):
         """创建并显示欢迎/风险提示界面。"""
@@ -94,7 +135,8 @@ class AutodoriGUI:
                                       variable=self.agree_var, command=self._toggle_proceed_button_state)
         agree_check.pack(pady=15)
 
-        self.proceed_button = ttk.Button(self.disclaimer_frame, text="进入控制面板", state=tk.DISABLED, command=self._show_main_app)
+        self.proceed_button = ttk.Button(self.disclaimer_frame, text="进入控制面板", state=tk.DISABLED,
+                                         command=self._show_main_app)
         self.proceed_button.pack(fill=tk.X, padx=100, ipady=5)
 
         # 步骤3：将事件处理函数绑定到容器的 <Configure> 事件
@@ -135,56 +177,62 @@ class AutodoriGUI:
 
     def _create_main_widgets(self):
         """创建主控制面板的所有控件。"""
-        # --- 修改：将 paned_window 保存为实例变量，并减少外边距 ---
-        self.paned_window = ttk.PanedWindow(self.master, orient=tk.VERTICAL)
-        self.paned_window.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)  # 外边距从10减为5
+        # --- 新增: 创建Notebook作为选项卡容器 ---
+        self.notebook = ttk.Notebook(self.master)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # --- 修改：减少 top_frame 的内边距 ---
-        top_frame = ttk.Frame(self.paned_window, padding="5")  # 内边距从10减为5
+        # --- 创建第一个选项卡：控制面板 ---
+        control_panel_frame = ttk.Frame(self.notebook, padding="5")
+        self.notebook.add(control_panel_frame, text='控制面板')
+        self._create_control_panel_tab(control_panel_frame)
+
+        # --- 创建第二个选项卡：全局变量调试 ---
+        globals_frame = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(globals_frame, text='全局变量调试')
+        self._create_globals_tab(globals_frame)
+
+    def _create_control_panel_tab(self, parent_frame):
+        """填充“控制面板”选项卡的内容"""
+        self.paned_window = ttk.PanedWindow(parent_frame, orient=tk.VERTICAL)
+        self.paned_window.pack(fill=tk.BOTH, expand=True)
+
+        top_frame = ttk.Frame(self.paned_window, padding="5")
         self.paned_window.add(top_frame, weight=0)
 
         style = ttk.Style()
         style.configure("Warning.TLabel", foreground="red")
 
-        # --- 修改：减少 config_frame 的垂直边距 ---
         config_frame = ttk.LabelFrame(top_frame, text="配置")
-        config_frame.pack(fill=tk.X, expand=True, side=tk.TOP, pady=(0, 5))  # 下方边距从10减为5
+        config_frame.pack(fill=tk.X, expand=True, side=tk.TOP, pady=(0, 5))
 
-        # --- 修改：减少 mode_frame 的边距 ---
         mode_frame = ttk.Frame(config_frame)
-        mode_frame.pack(fill=tk.X, padx=2, pady=2)  # 边距从5减为2
+        mode_frame.pack(fill=tk.X, padx=2, pady=2)
         ttk.Label(mode_frame, text="模式:").pack(side=tk.LEFT)
-        # --- 修改：减少 Radiobutton 之间的距离 ---
-        ttk.Radiobutton(mode_frame, text="单曲模式", variable=self.mode_var, value='single').pack(side=tk.LEFT,
-                                                                                                  padx=5)  # 边距从10减为5
+        ttk.Radiobutton(mode_frame, text="单曲模式", variable=self.mode_var, value='single').pack(side=tk.LEFT, padx=5)
         ttk.Radiobutton(mode_frame, text="全自动模式", variable=self.mode_var, value='full_auto').pack(side=tk.LEFT,
-                                                                                                       padx=5)  # 边距从10减为5
+                                                                                                       padx=5)
 
-        # --- 修改：减少 warnings_frame 的左边距 ---
         warnings_frame = ttk.Frame(mode_frame)
-        warnings_frame.pack(side=tk.RIGHT, padx=(10, 0))  # 边距从20减为10
+        warnings_frame.pack(side=tk.RIGHT, padx=(10, 0))
 
-        # --- 修改：减少 options_frame 的边距 ---
         options_frame = ttk.Frame(config_frame)
-        options_frame.pack(fill=tk.X, padx=2, pady=2)  # 边距从5减为2
+        options_frame.pack(fill=tk.X, padx=2, pady=2)
 
         ttk.Label(options_frame, text="难度:").pack(side=tk.LEFT)
         ttk.Combobox(options_frame, textvariable=self.difficulty_var,
-                     values=['easy', 'normal', 'hard', 'expert', 'special'], width=10).pack(side=tk.LEFT,
-                                                                                            padx=3)  # 边距从5减为3
+                     values=['easy', 'normal', 'hard', 'expert', 'special'], width=10).pack(side=tk.LEFT, padx=3)
 
-        ttk.Label(options_frame, text="未FC跳过阈值：").pack(side=tk.LEFT, padx=(5, 0))  # 调整边距
+        ttk.Label(options_frame, text="未FC跳过阈值：").pack(side=tk.LEFT, padx=(5, 0))
         ttk.Spinbox(options_frame, from_=1, to=99, textvariable=self.max_not_fc_var, width=5).pack(side=tk.LEFT, padx=3)
 
-        # --- 修改：减少复选框区域的边距 ---
         full_song_frame = ttk.Frame(options_frame)
-        full_song_frame.pack(side=tk.LEFT, padx=5)  # 边距从10减为5
+        full_song_frame.pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(full_song_frame, text="支持FULL曲", variable=self.isfull_var).pack(side=tk.LEFT)
         self.full_song_warning_label = ttk.Label(warnings_frame, text="警告：成功率极低，请勿对没有FULL谱的歌曲使用",
                                                  style="Warning.TLabel")
 
         human_delay_frame = ttk.Frame(options_frame)
-        human_delay_frame.pack(side=tk.LEFT, padx=5)  # 边距从10减为5
+        human_delay_frame.pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(human_delay_frame, text="随机化按键", variable=self.human_var).pack(side=tk.LEFT)
         self.human_delay_warning_label = ttk.Label(warnings_frame, text="警告：可能导致不能FC", style="Warning.TLabel")
 
@@ -197,11 +245,10 @@ class AutodoriGUI:
 
         control_frame = ttk.Frame(top_frame)
         control_frame.pack(fill=tk.X, expand=True, side=tk.TOP, pady=(5, 0))
-        # --- 修改：减少按钮之间的距离 ---
         self.start_button = ttk.Button(control_frame, text="启动任务", command=self.start_bot)
-        self.start_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)  # 边距从5减为2
+        self.start_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
         self.stop_button = ttk.Button(control_frame, text="停止任务", command=self.stop_bot, state=tk.DISABLED)
-        self.stop_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)  # 边距从5减为2
+        self.stop_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
         log_frame = ttk.Frame(self.paned_window, padding="0")
         self.paned_window.add(log_frame, weight=1)
@@ -209,9 +256,116 @@ class AutodoriGUI:
                                                      fg="white")
         self.log_display.pack(fill=tk.BOTH, expand=True)
 
-        # --- 新增：绑定事件来禁用 sash 拖动 ---
         self.paned_window.bind("<ButtonPress-1>", self._prevent_resize)
         self.paned_window.bind("<B1-Motion>", self._prevent_resize)
+
+    def _create_globals_tab(self, parent_frame):
+        """填充“全局变量调试”选项卡的内容"""
+        # 定义需要暴露的全局变量及其类型 (int, float, dict)
+        self.editable_globals = {
+            'PHOTOGATE_LATENCY': int,
+            'MIN_LIVEBOOST': int,
+            'DEFAULT_MOVE_SLICE_SIZE': int,
+            'CMD_SLICE_SIZE': int,
+            'MAX_CONTINUOUS_FAILED_TIMES': int,
+            'STABLE_THRESHOLD': int,
+            'CONSECUTIVE_FRAMES_NEEDED': int,
+            'CONFIDENCE_THRESHOLD_FAILURE': float,
+            'CONFIDENCE_THRESHOLD_PLAY': float,
+            'FREEZE_SLEEP_TIME': float
+        }
+
+        # --- 新增：本地化文本映射 ---
+        localization_map = {
+            'PHOTOGATE_LATENCY': "光电门延迟 (ms)",
+            'MIN_LIVEBOOST': "最小 LiveBoost 值",
+            'DEFAULT_MOVE_SLICE_SIZE': "滑动音符切片大小",
+            'CMD_SLICE_SIZE': "指令分片大小",
+            'MAX_CONTINUOUS_FAILED_TIMES': "最大连续失败次数",
+            'STABLE_THRESHOLD': "画面静止判定阈值",
+            'CONSECUTIVE_FRAMES_NEEDED': "画面静止所需帧数",
+            'CONFIDENCE_THRESHOLD_FAILURE': "失败检测置信度",
+            'CONFIDENCE_THRESHOLD_PLAY': "歌曲开始检测置信度",
+            'FREEZE_SLEEP_TIME': "屏幕静止检测间隔时间 (s)"
+        }
+
+        # 使用 grid 布局
+        parent_frame.columnconfigure(1, weight=1)
+
+        # 动态创建 Label 和 Entry
+        current_row = 0
+        for var_name, var_type in self.editable_globals.items():
+            # --- 修改：使用本地化文本 ---
+            # 使用 .get() 方法，如果映射中没有找到，则安全地回退到原始变量名
+            display_name = localization_map.get(var_name, var_name)
+            ttk.Label(parent_frame, text=f"{display_name}:", font=("", 10)).grid(row=current_row, column=0, sticky='w',
+                                                                                 padx=5, pady=5)
+
+            if var_type == dict:
+                dict_frame = ttk.Frame(parent_frame)
+                dict_frame.grid(row=current_row, column=1, sticky='ew', padx=5, pady=2)
+                self.global_vars_entries[var_name] = {}
+
+                # 获取字典的当前值
+                current_dict = getattr(autodori_ui, var_name)
+
+                col_count = 0
+                for key, value in current_dict.items():
+                    ttk.Label(dict_frame, text=key).grid(row=0, column=col_count, padx=(0, 2))
+                    entry_var = tk.StringVar(value=str(value))
+                    entry = ttk.Entry(dict_frame, textvariable=entry_var, width=8)
+                    entry.grid(row=0, column=col_count + 1, padx=(0, 10))
+
+                    self.global_vars_entries[var_name][key] = entry_var
+                    col_count += 2
+            else:  # int or float
+                entry_var = tk.StringVar(value=str(getattr(autodori_ui, var_name)))
+                entry = ttk.Entry(parent_frame, textvariable=entry_var)
+                entry.grid(row=current_row, column=1, sticky='ew', padx=5, pady=2)
+                self.global_vars_entries[var_name] = entry_var
+
+            current_row += 1
+
+        # 添加分隔符
+        ttk.Separator(parent_frame, orient='horizontal').grid(row=current_row, column=0, columnspan=2, sticky='ew',
+                                                              pady=15)
+        current_row += 1
+
+        # 添加按钮
+        button_frame = ttk.Frame(parent_frame)
+        button_frame.grid(row=current_row, column=0, columnspan=2, sticky='e')
+
+        apply_button = ttk.Button(button_frame, text="应用修改", command=self._apply_global_settings)
+        apply_button.pack(side=tk.RIGHT, padx=5)
+
+    def _apply_global_settings(self):
+        """将UI中的值应用到后端的全局变量"""
+        try:
+            for var_name, controls in self.global_vars_entries.items():
+                var_type = self.editable_globals[var_name]
+
+                if var_type == dict:
+                    current_dict = getattr(autodori_ui, var_name)
+                    for key, entry_var in controls.items():
+                        new_val_str = entry_var.get()
+                        # 尝试转换为 float，如果失败再转为 int
+                        try:
+                            current_dict[key] = float(new_val_str)
+                        except ValueError:
+                            current_dict[key] = int(new_val_str)
+                else:  # int or float
+                    new_val_str = controls.get()
+                    if var_type == int:
+                        setattr(autodori_ui, var_name, int(new_val_str))
+                    elif var_type == float:
+                        setattr(autodori_ui, var_name, float(new_val_str))
+
+            messagebox.showinfo("成功", "全局变量已成功更新！")
+
+        except ValueError as e:
+            messagebox.showerror("输入错误", f"修改失败，请输入有效的数值。\n错误: {e}")
+        except Exception as e:
+            messagebox.showerror("未知错误", f"应用设置时发生错误: {e}")
 
     def _process_log_queue(self):
         try:
@@ -228,6 +382,9 @@ class AutodoriGUI:
     def start_bot(self):
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
+        # --- 新增: 禁用全局变量选项卡 ---
+        self.notebook.tab(1, state='disabled')
+
         config_data = {
             "mode": self.mode_var.get(),
             "difficulty": self.difficulty_var.get(),
@@ -239,8 +396,14 @@ class AutodoriGUI:
         self.bot_thread.start()
 
     def stop_bot(self):
+        # 优先设置停止信号，让内部循环能够尽快响应
+        if hasattr(autodori_ui, 'stop_event'):
+            logging.info("正在发送停止信号以中断内部操作...")
+            autodori_ui.stop_event.set()  # <-- 这是关键的新增行
+
+        # 然后再通知maatasker停止任务流
         if hasattr(autodori_ui, 'maatasker') and autodori_ui.maatasker and autodori_ui.maatasker.running:
-            logging.info("正在尝试停止任务...")
+            logging.info("正在尝试停止MAA任务调度器...")
             autodori_ui.maatasker.post_stop()
         else:
             logging.warning("任务未在运行或尚未初始化，无需停止。")
@@ -263,6 +426,8 @@ class AutodoriGUI:
         finally:
             self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
+            # --- 新增: 恢复全局变量选项卡 ---
+            self.notebook.tab(1, state='normal')
 
     def _prevent_resize(self, event):
         """拦截并阻止PanedWindow的尺寸调整事件。"""
@@ -292,6 +457,22 @@ class AutodoriGUI:
 
 # --- 程序入口 ---
 if __name__ == "__main__":
+    # 仅在Windows平台上执行此操作
+    if sys.platform == 'win32':
+        # 创建一个 STARTUPINFO 对象，用于更精细地控制新进程的创建
+        startupinfo = subprocess.STARTUPINFO()
+        # 设置 dwFlags 标志位，告诉系统我们要自己控制窗口的显示方式
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        # wShowWindow 标志位可以被设置为 SW_HIDE (值为0) 来彻底隐藏窗口
+        # 通常上面的 dwFlags 设置已经足够，但为了保险起见可以加上
+        # startupinfo.wShowWindow = 0 # 0 means SW_HIDE
+
+        # 使用 functools.partial 创建一个新的 Popen “版本”
+        # 这个新版本会自动将我们配置好的 startupinfo 作为默认参数传入
+        # 然后用这个新版本覆盖（“猴子补丁”）标准的 subprocess.Popen
+        # 这样，程序中所有（包括库里）对 subprocess.Popen 的调用都会自动应用我们的设置，从而隐藏窗口
+        subprocess.Popen = partial(subprocess.Popen, startupinfo=startupinfo)
+    # --- 新增代码结束 ---
     root = tk.Tk()
     app = AutodoriGUI(root)
     root.mainloop()

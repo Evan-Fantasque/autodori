@@ -51,21 +51,24 @@ def resource_path(relative_path):
 
 
 # --- Global Variables & Constants ---
-MIN_LIVEBOOST = 1
-DIFFICULTY = "hard"
-IS_FULL_SONG = False
-OFFSET = {"up": 0, "down": 0, "move": 0, "wait": 0.0, "interval": 0.0}
 PHOTOGATE_LATENCY = 30
+MIN_LIVEBOOST = 1
 DEFAULT_MOVE_SLICE_SIZE = 10
 CMD_SLICE_SIZE = 100
-HUMAN_DELAY_ENABLED = True
 MAX_CONTINUOUS_FAILED_TIMES = 10
-play_failed_times: int = 0
-
-# Global variable to track songs that were not Full Combo'd.
-not_fc_song_counts: dict[str, int] = {}
-# A song will be skipped after failing to achieve a Full Combo this many times.
-MAX_NOT_FC_COUNT = 1
+STABLE_THRESHOLD = 3
+CONSECUTIVE_FRAMES_NEEDED = 100
+CONFIDENCE_THRESHOLD_FAILURE = 0.8
+CONFIDENCE_THRESHOLD_PLAY = 0.4
+FREEZE_SLEEP_TIME = 0.01
+MAX_NOT_FC_COUNT = 1 # A song will be skipped after failing to achieve a Full Combo this many times.
+PLAY_FAILED_TIMES = 0
+DIFFICULTY = "hard"
+HUMAN_DELAY_ENABLED = True
+IS_FULL_SONG = False
+OFFSET = {"up": 0, "down": 0, "move": 0, "wait": 0.0, "interval": 0.0}
+NOT_FC_SONG_COUNT_DICT: dict[str, int] = {} # Global variable to track songs that were not Full Combo'd.
+LAST_PLAYED_SONG_ID: Optional[str] = None # <-- 新增：记录上一首歌曲ID的变量
 
 # Playback monitor thread
 stop_event = threading.Event()
@@ -102,13 +105,13 @@ callback_data: dict = {}
 callback_data_lock = threading.Lock()
 cmd_log_list: list = []
 cmd_log_list_lock = threading.Lock()
-
+"""
 # --- Real-time Streaming Components ---
 streaming_thread: Optional[threading.Thread] = None
 streaming_active = threading.Event()
 STREAM_SETTINGS = {"fps": 1, "resolution": 480}
 stream_settings_lock = threading.Lock()
-
+"""
 
 def reset_callback_data():
     global callback_data
@@ -189,7 +192,6 @@ def monitor_failure_thread(stop_event, playback_started_event):
             return
 
         template = cv2.imread(str(fail_template_path), 0)
-        CONFIDENCE_THRESHOLD = 0.8
 
         # Monitor loop until stop signal received
         while not stop_event.is_set():
@@ -204,7 +206,7 @@ def monitor_failure_thread(stop_event, playback_started_event):
             result = cv2.matchTemplate(screen_gray, template, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, _ = cv2.minMaxLoc(result)
 
-            if max_val >= CONFIDENCE_THRESHOLD:
+            if max_val >= CONFIDENCE_THRESHOLD_FAILURE:
                 logging.error(f"Detected 'Live Failed' screen (match: {max_val:.2f})! Sending stop signal!")
                 stop_event.set()  # Key: Set stop event to notify other threads
                 break  # Task complete, exit loop
@@ -226,7 +228,6 @@ def play_song(stop_event, playback_started_event):
 
     # STAGE 1: Wait for the game to load by detecting the pause button
     logging.info("Waiting for game to load, detecting pause button...")
-    CONFIDENCE_THRESHOLD = 0.9
     template_path = resource_path("assets/resource/image/live/button/pause.png")
     if not template_path.exists():
         logging.error(f"Pause button template image not found: {template_path}")
@@ -238,17 +239,18 @@ def play_song(stop_event, playback_started_event):
     pause_button_found = False
     wait_start_time = time.time()
     while not pause_button_found:
-        if time.time() - wait_start_time > 30:
-            logging.error("Timeout (30s) waiting for pause button. Aborting playback.")
+        timeout=30
+        if time.time() - wait_start_time > timeout:
+            logging.error(f"Timeout ({timeout}s) waiting for pause button. Aborting playback.")
             return
         screen = current_player.ipc_capture_display()
         height, width, _ = screen.shape
-        roi_screen = screen[0:int(height * 0.15), int(width * 0.95):width]
+        roi_screen = screen[0:int(height * 0.15), width-int(height * 0.15):width]
         gray_roi = cv2.cvtColor(roi_screen, cv2.COLOR_BGR2GRAY)
         result = cv2.matchTemplate(gray_roi, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, _ = cv2.minMaxLoc(result)
         logging.debug(f"Waiting for pause button... match confidence: {max_val:.2f}")
-        if max_val >= CONFIDENCE_THRESHOLD:
+        if max_val >= CONFIDENCE_THRESHOLD_PLAY:
             pause_button_found = True
         else:
             time.sleep(0.5)
@@ -284,20 +286,24 @@ def play_song(stop_event, playback_started_event):
             cur_color, _ = get_color_eval_in_range(screen, from_row, to_row)
             if last_color is not None:
                 change_score = np.sum(np.abs(cur_color[:3].astype(int) - last_color[:3].astype(int)))
-                logging.debug(f"Color change delta: {change_score}")
-                if change_score > 3 and freezed:
+                if change_score > STABLE_THRESHOLD and freezed:
                     logging.info("First note detected, starting playback.")
                     time.sleep(PHOTOGATE_LATENCY / 1000)
                     break
                 elif not freezed:
-                    waited_frames += 1
-                if not freezed and waited_frames >= 200:
+                    logging.info(f"Color change delta: {change_score}, waited_frames: {waited_frames}")
+                    if change_score < STABLE_THRESHOLD:
+                        waited_frames += 1
+                    else:
+                        waited_frames = 0
+                if not freezed and waited_frames >= CONSECUTIVE_FRAMES_NEEDED:
                     freezed = True
                     logging.info("Screen has frozen. Photogate is ready.")
             last_color = cur_color
+            time.sleep(FREEZE_SLEEP_TIME)
         except Exception as e:
             logging.error(f"Error during photogate detection: {e}")
-            time.sleep(0.1)
+            return
 
     # STAGE 4: Command execution loop
     playback_started_event.set()
@@ -398,12 +404,21 @@ class UICheckFCStatusRecognition(CustomRecognition):
     """
 
     def analyze(self, context: Context, argv: CustomRecognition.AnalyzeArg):
-        global not_fc_song_counts, current_song_id, current_song_name, MAX_NOT_FC_COUNT
+        global NOT_FC_SONG_COUNT_DICT, current_song_id, current_song_name, MAX_NOT_FC_COUNT
 
         if not current_song_id:
             return self.AnalyzeResult(None, "")
 
-        count = not_fc_song_counts.get(current_song_id, 0)
+        # --- 新增的熔断检查 ---
+        # 如果当前选择的歌曲和上一首是同一首，则强制跳过
+        if current_song_id == LAST_PLAYED_SONG_ID:
+            logging.warning(
+                f"Preventing loop: Song '{current_song_name}' is the same as the last on, force random song."
+            )
+            return self.AnalyzeResult([0, 0, 0, 0], "repeated")
+
+        # --- 原有的次数超限检查 ---
+        count = NOT_FC_SONG_COUNT_DICT.get(current_song_id, 0)
 
         if count >= MAX_NOT_FC_COUNT:
             logging.warning(
@@ -539,7 +554,7 @@ class UIPlayResult(CustomRecognition):
 @maaresource.custom_action("UISavePlayResult")
 class UISavePlayResult(CustomAction):
     def run(self, context, argv):
-        global play_failed_times, not_fc_song_counts
+        global PLAY_FAILED_TIMES, NOT_FC_SONG_COUNT_DICT
 
         # Improved handling of the 'succeed' parameter.
         succeed = False
@@ -555,19 +570,70 @@ class UISavePlayResult(CustomAction):
         if succeed and argv.reco_detail and argv.reco_detail.best_result:
             try:
                 play_result = argv.reco_detail.best_result.detail
-                # "Not Full Combo" logic
-                is_not_fc = (
-                        play_result.get("good", 0) > 0 or
-                        play_result.get("bad", 0) > 0 or
-                        play_result.get("miss", 0) > 0
+                # --- 优化后的“非Full Combo”健壮性判断逻辑 (V3 - 增加乐观检查) ---
+
+                # 1. 安全地获取所有数值
+                perfect = play_result.get('perfect', -1)
+                great = play_result.get('great', -1)
+                good = play_result.get('good', -1)
+                bad = play_result.get('bad', -1)
+                miss = play_result.get('miss', -1)
+                maxcombo = play_result.get('maxcombo', -1)
+
+                is_not_fc = False
+                reasons = []
+
+                # 2. 新增【乐观检查】(Optimistic Check):
+                # 检查是否满足 All Perfect (AP) 的强条件 (perfect + great == maxcombo)。
+                # 这是一个非常强的FC信号，即使 good/bad/miss 的数据缺失(-1)也可以采信。
+                is_ap_by_sum = (
+                        perfect != -1 and
+                        great != -1 and
+                        maxcombo != -1 and
+                        (perfect + great) == maxcombo
                 )
+
+                if is_ap_by_sum:
+                    # 如果满足AP条件，我们就可以100%确信这是一个FC。
+                    # 因此，直接判定 is_not_fc 为 False，并跳过所有后续的“非FC”检查。
+                    is_not_fc = False
+                    logging.info("通过P+G与MaxCombo校验，判定为视为FC。")
+                else:
+                    # 3. 如果【乐观检查】不通过，则执行之前的【保守检查】(Pessimistic Check)
+
+                    # a. 检查数据完整性
+                    if -1 in [perfect, great, good, bad, miss, maxcombo]:
+                        is_not_fc = True
+                        reasons.append("一个或多个结算数值识别失败(值为-1)")
+                    else:
+                        # b. 如果所有数值都有效，再进行游戏逻辑判断
+                        if bad > 0:
+                            reasons.append(f"存在Bad(数量:{bad})")
+                        if miss > 0:
+                            reasons.append(f"存在Miss(数量:{miss})")
+                        if good > 0:
+                            reasons.append(f"存在Good(数量:{good})")
+
+                        # c. 交叉验证 (P+G+Gd vs MaxCombo)
+                        sum_of_judgements = perfect + great + good
+                        if maxcombo != sum_of_judgements:
+                            reasons.append(f"判定总和与MaxCombo不符 (P+G+Gd={sum_of_judgements}, Combo={maxcombo})")
+
+                        if reasons:
+                            is_not_fc = True
+
+                # --- 判断逻辑结束 ---
+
                 if is_not_fc and current_song_id:
-                    current_count = not_fc_song_counts.get(current_song_id, 0)
-                    not_fc_song_counts[current_song_id] = current_count + 1
+                    current_count = NOT_FC_SONG_COUNT_DICT.get(current_song_id, 0)
+                    NOT_FC_SONG_COUNT_DICT[current_song_id] = current_count + 1
+                    # 日志现在只在确定为“非FC”时才打印原因
                     logging.warning(
                         f"Song '{current_song_name}' did not achieve a Full Combo. "
-                        f"Total count: {not_fc_song_counts[current_song_id]}"
+                        f"Total count: {NOT_FC_SONG_COUNT_DICT[current_song_id]}"
+                        f"reasons: {', '.join(reasons)}"
                     )
+
             except json.JSONDecodeError:
                 logging.error("Failed to parse play result JSON.")
                 play_result = {}
@@ -575,26 +641,26 @@ class UISavePlayResult(CustomAction):
         # Increment failure count only on explicit failures (e.g., live failed, pipeline error).
         if succeed:
             # If task is successful and there were previous failures, log and reset counter
-            if play_failed_times > 0:
-                logging.info(f"Task successful, resetting continuous failure count from {play_failed_times} to zero.")
-            play_failed_times = 0
+            if PLAY_FAILED_TIMES > 0:
+                logging.info(f"Task successful, resetting continuous failure count from {PLAY_FAILED_TIMES} to zero.")
+            PLAY_FAILED_TIMES = 0
         else:  # 'not succeed' case
             # If task failed, increment counter unconditionally 
-            play_failed_times += 1
-            logging.info(f"Recording one task failure, current continuous failure count: {play_failed_times}")
+            PLAY_FAILED_TIMES += 1
+            logging.info(f"Recording one task failure, current continuous failure count: {PLAY_FAILED_TIMES}")
 
         PlayRecord.create(
             play_time=int(time.time()), play_offset=OFFSET, result=play_result,
             succeed=succeed, chart_id=current_song_id, difficulty=DIFFICULTY,
         )
 
-        if play_failed_times >= MAX_CONTINUOUS_FAILED_TIMES:
+        if PLAY_FAILED_TIMES >= MAX_CONTINUOUS_FAILED_TIMES:
             logging.error(f"Continuous failure limit reached ({MAX_CONTINUOUS_FAILED_TIMES}). Stopping automatically.")
             context.run_action("stop")
 
         return self.RunResult(True)
 
-
+"""
 # --- Screen Streaming ---
 def _stream_loop(socketio):
     while streaming_active.is_set():
@@ -635,7 +701,7 @@ def stop_streaming():
     streaming_active.clear()
     if streaming_thread and streaming_thread.is_alive(): streaming_thread.join(timeout=1)
     streaming_thread = None
-
+"""
 
 # --- Task Entrypoints ---
 def init():
@@ -654,12 +720,39 @@ def run_simplified_autodori(config_data):
     HUMAN_DELAY_ENABLED = config_data.get("human_delay", False)
     if not maacontroller or not mnt: raise RuntimeError("MAA is not initialized.")
     override_pipeline = {
-        "ui_simplified_entry": {"recognition": "Custom", "custom_recognition": "UISongRecognitionMedley",
-                                "action": "Custom", "custom_action": "UISaveSong", "next": ["startlive"],
-                                "timeout": 15000, "on_error": ["stop"]},
-        "startlive": {"action": "Click", "next": ["playsong"], "on_error": ["stop"], "recognition": "TemplateMatch",
-                      "template": "live/button/live_medley.png", "threshold": 0.5},
-        "playsong": {"action": "Custom", "custom_action": "UIPlay", "next": ["stop"], "timeout": 500000},
+        "ui_simplified_entry": {
+            "recognition": "Custom",
+            "custom_recognition": "UISongRecognitionMedley",
+            "action": "Custom",
+            "custom_action": "UISaveSong",
+            "next": [
+                "startlive"
+            ],
+            "timeout": 15000,
+            "on_error": [
+                "stop"
+            ]
+        },
+        "startlive": {
+            "action": "Click",
+            "next": [
+                "playsong"
+            ],
+            "on_error": [
+                "stop"
+            ],
+            "recognition": "TemplateMatch",
+            "template": "live/button/live_medley.png",
+            "threshold": 0.5
+        },
+        "playsong": {
+            "action": "Custom",
+            "custom_action": "UIPlay",
+            "next": [
+                "stop"
+            ],
+            "timeout": 500000
+        },
     }
     logging.info("Submitting Single Song Mode auto-play task...")
     maatasker.post_task("ui_simplified_entry", override_pipeline).wait()
@@ -668,7 +761,7 @@ def run_simplified_autodori(config_data):
 
 def run_full_auto_mode(config_data):
     """Full auto mode with failure stop and non-FC skip functionality."""
-    global DIFFICULTY, IS_FULL_SONG, HUMAN_DELAY_ENABLED, play_failed_times, not_fc_song_counts, MAX_NOT_FC_COUNT
+    global DIFFICULTY, IS_FULL_SONG, HUMAN_DELAY_ENABLED, PLAY_FAILED_TIMES, NOT_FC_SONG_COUNT_DICT, MAX_NOT_FC_COUNT
 
     DIFFICULTY = config_data.get("difficulty", "hard")
     IS_FULL_SONG = config_data.get("is_full_song", False)
@@ -678,8 +771,8 @@ def run_full_auto_mode(config_data):
     # Use .get() with a default value of 1 for safety
     MAX_NOT_FC_COUNT = config_data.get("max_not_fc_count", 1)
 
-    play_failed_times = 0
-    not_fc_song_counts.clear()
+    PLAY_FAILED_TIMES = 0
+    NOT_FC_SONG_COUNT_DICT.clear()
 
     # Add a log to confirm the setting was received
     logging.info(f"Non-FC Skip Limit set to: {MAX_NOT_FC_COUNT}")
@@ -693,21 +786,32 @@ def run_full_auto_mode(config_data):
         common_pipeline_def = json.load(f)
 
     result_screen_interrupts = [
-        "next_button", "ok_button", "close_button", "confirm_button", "read_after"
+        "next_button",
+        "close_button",
+        "ok_button",
+        "confirm_button",
+        "reader_menu",
+        "read_after"
     ]
 
     override_pipeline = {
         # --- Song Selection Flow ---
         "select_song": {
             **live_pipeline_def["select_song"],
-            "next": ["get_song_name","random_choice_song_action"],
+            "next": [
+                "get_song_name",
+                "random_choice_song_action"
+            ],
         },
         "get_song_name": {
             "recognition": "Custom",
             "custom_recognition": "UISongRecognition",
             "action": "Custom",
             "custom_action": "UISaveSong",
-            "next": ["decide_play_or_skip", "click_confirm_on_song_select"],
+            "next": [
+                "decide_play_or_skip",
+                "click_confirm_on_song_select"
+            ],
             "timeout": 15000,
         },
         # Decision node
@@ -718,11 +822,15 @@ def run_full_auto_mode(config_data):
         },
         "random_choice_song_action": {
             **live_pipeline_def["random_choice_song"],
-            "next": ["select_song"]
+            "next": [
+                "select_song"
+            ]
         },
         "click_confirm_on_song_select": {
             **common_pipeline_def["confirm_button"],
-            "next": ["wait_for_final_confirmation"]
+            "next": [
+                "wait_for_final_confirmation"
+            ]
         },
         "wait_for_final_confirmation": {
             "recognition": "OCR",
@@ -754,21 +862,28 @@ def run_full_auto_mode(config_data):
                 "connect_failed"
             ],
             "post_delay": 2000,
-            "next": ["playsong"]
+            "next": [
+                "playsong"
+            ]
         },
 
         # --- Playback and Post-Live Flow ---
         "playsong": {
-            "action": "Custom", "custom_action": "UIPlay",
-            "next": ["wait_for_result_screen"],
+            "action": "Custom",
+            "custom_action": "UIPlay",
+            "next": [
+                "wait_for_result_screen"
+            ],
             "timeout": 500000,
             "interrupt": [
-                "live_failed_handler", "next_button", "close_button", "ok_button",
-                "confirm_button", "login_expired", "connect_failed"
+                "live_failed",
+                "next_button",
+                "close_button",
+                "ok_button",
+                "confirm_button",
+                "login_expired",
+                "connect_failed"
             ]
-        },
-        "live_failed_handler": {
-            **live_pipeline_def["live_failed"],
         },
         "save_failed_playresult": {
             "action": "Custom",
@@ -785,8 +900,15 @@ def run_full_auto_mode(config_data):
                 "roi": [679, 183, 257, 354],
                 "action": "Click",
                 "post_delay": 1000,
-                "next": ["select_song", "select_live_mode", "live_home_button"],
-                "interrupt": ["login_expired", "connect_failed"],
+                "next": [
+                    "select_song",
+                    "select_live_mode",
+                    "live_home_button"
+                ],
+                "interrupt": [
+                    "login_expired",
+                    "connect_failed"
+                ],
         },
         # --- Optimized Results Screen Flow ---
         "wait_for_result_screen": {
@@ -798,8 +920,11 @@ def run_full_auto_mode(config_data):
             "pre_wait_freezes": {"threshold": 0.65, "time": 5000},
             "next": ["wait_playresult"],
             "interrupt": [
-                "live_failed_handler", "next_button", "close_button",
-                "ok_button", "confirm_button"
+                "live_failed",
+                "next_button",
+                "close_button",
+                "ok_button",
+                "confirm_button"
             ],
             "post_delay": 3000
         },
@@ -813,17 +938,18 @@ def run_full_auto_mode(config_data):
             "next": "get_result"
         },
         "get_result": {
-            "recognition": "Custom", "custom_recognition": "UIPlayResult",
-            "action": "Custom", "custom_action": "UISavePlayResult",
+            "recognition": "Custom",
+            "custom_recognition": "UIPlayResult",
+            "action": "Custom",
+            "custom_action": "UISavePlayResult",
             "custom_action_param": {"succeed": True},
-            "next": ["liveagain"],
+            "next": [
+                "liveagain"
+            ],
             "timeout": 30000,
-            "on_error": ["stop"],
-            "interrupt": result_screen_interrupts
-        },
-        "liveagain": {
-            **live_pipeline_def["liveagain"],
-            "next": ["select_song"],
+            "on_error": [
+                "stop"
+            ],
             "interrupt": result_screen_interrupts
         },
     }
