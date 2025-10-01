@@ -38,10 +38,11 @@ class AutodoriGUI:
 
         # --- 为UI控件创建Tkinter变量 ---
         self.mode_var = tk.StringVar(value='full_auto')
-        self.difficulty_var = tk.StringVar(value='hard')
-        self.isfull_var = tk.BooleanVar(value=False)
-        self.human_var = tk.BooleanVar(value=False)
-        self.max_not_fc_var = tk.IntVar(value=1)
+        self.difficulty_var = tk.StringVar(value=autodori_ui.DIFFICULTY)
+        self.isfull_var = tk.BooleanVar(value=autodori_ui.IS_FULL_SONG)
+        self.human_var = tk.BooleanVar(value=autodori_ui.HUMAN_DELAY_ENABLED)
+        self.max_not_fc_var = tk.IntVar(value=autodori_ui.MAX_NOT_FC_COUNT)
+        self.max_attempt_var = tk.IntVar(value=autodori_ui.MAX_SONG_ATTEMPTS)
 
         # --- 绑定状态追踪 ---
         self.isfull_var.trace_add('write', self._update_warnings)
@@ -225,6 +226,9 @@ class AutodoriGUI:
         ttk.Label(options_frame, text="未FC跳过阈值：").pack(side=tk.LEFT, padx=(5, 0))
         ttk.Spinbox(options_frame, from_=1, to=99, textvariable=self.max_not_fc_var, width=5).pack(side=tk.LEFT, padx=3)
 
+        ttk.Label(options_frame, text="最大尝试次数：").pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Spinbox(options_frame, from_=1, to=99, textvariable=self.max_attempt_var, width=5).pack(side=tk.LEFT, padx=3)
+
         full_song_frame = ttk.Frame(options_frame)
         full_song_frame.pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(full_song_frame, text="支持FULL曲", variable=self.isfull_var).pack(side=tk.LEFT)
@@ -270,9 +274,10 @@ class AutodoriGUI:
             'MAX_CONTINUOUS_FAILED_TIMES': int,
             'STABLE_THRESHOLD': int,
             'CONSECUTIVE_FRAMES_NEEDED': int,
+            'FREEZE_SLEEP_TIME': float,
             'CONFIDENCE_THRESHOLD_FAILURE': float,
             'CONFIDENCE_THRESHOLD_PLAY': float,
-            'FREEZE_SLEEP_TIME': float
+            'MAX_SONG_ATTEMPTS': int
         }
 
         # --- 新增：本地化文本映射 ---
@@ -284,9 +289,10 @@ class AutodoriGUI:
             'MAX_CONTINUOUS_FAILED_TIMES': "最大连续失败次数",
             'STABLE_THRESHOLD': "画面静止判定阈值",
             'CONSECUTIVE_FRAMES_NEEDED': "画面静止所需帧数",
+            'FREEZE_SLEEP_TIME': "画面静止检测间隔时间 (s)",
             'CONFIDENCE_THRESHOLD_FAILURE': "失败检测置信度",
             'CONFIDENCE_THRESHOLD_PLAY': "歌曲开始检测置信度",
-            'FREEZE_SLEEP_TIME': "屏幕静止检测间隔时间 (s)"
+            'MAX_SONG_ATTEMPTS':"歌曲最大尝试次数"
         }
 
         # 使用 grid 布局
@@ -390,7 +396,8 @@ class AutodoriGUI:
             "difficulty": self.difficulty_var.get(),
             "is_full_song": self.isfull_var.get(),
             "human_delay": self.human_var.get(),
-            "max_not_fc_count": self.max_not_fc_var.get()
+            "max_not_fc_count": self.max_not_fc_var.get(),
+            "max_attempt_count": self.max_attempt_var.get()
         }
         self.bot_thread = threading.Thread(target=self._run_bot_task, args=(config_data,), daemon=True)
         self.bot_thread.start()

@@ -58,10 +58,11 @@ CMD_SLICE_SIZE = 100
 MAX_CONTINUOUS_FAILED_TIMES = 10
 STABLE_THRESHOLD = 3
 CONSECUTIVE_FRAMES_NEEDED = 100
+FREEZE_SLEEP_TIME = 0.01
 CONFIDENCE_THRESHOLD_FAILURE = 0.8
 CONFIDENCE_THRESHOLD_PLAY = 0.4
-FREEZE_SLEEP_TIME = 0.01
 MAX_NOT_FC_COUNT = 1 # A song will be skipped after failing to achieve a Full Combo this many times.
+MAX_SONG_ATTEMPTS = 3 # 每首歌在一次任务中最多尝试3次
 PLAY_FAILED_TIMES = 0
 DIFFICULTY = "hard"
 HUMAN_DELAY_ENABLED = True
@@ -69,6 +70,7 @@ IS_FULL_SONG = False
 OFFSET = {"up": 0, "down": 0, "move": 0, "wait": 0.0, "interval": 0.0}
 NOT_FC_SONG_COUNT_DICT: dict[str, int] = {} # Global variable to track songs that were not Full Combo'd.
 LAST_PLAYED_SONG_ID: Optional[str] = None # <-- 新增：记录上一首歌曲ID的变量
+SONG_ATTEMPT_COUNT_DICT: dict[str, int] = {} # <-- 新增：记录总尝试次数
 
 # Playback monitor thread
 stop_event = threading.Event()
@@ -413,16 +415,24 @@ class UICheckFCStatusRecognition(CustomRecognition):
         # 如果当前选择的歌曲和上一首是同一首，则强制跳过
         if current_song_id == LAST_PLAYED_SONG_ID:
             logging.warning(
-                f"Preventing loop: Song '{current_song_name}' is the same as the last on, force random song."
+                f"Song '{current_song_name}' is the same as the last one, force random song."
             )
             return self.AnalyzeResult([0, 0, 0, 0], "repeated")
+
+        # 2. 新增的总尝试次数检查
+        attempt_count = SONG_ATTEMPT_COUNT_DICT.get(current_song_id, 0)
+        if attempt_count >= MAX_SONG_ATTEMPTS:
+            logging.warning(
+                f"Song '{current_song_name}' has reached max attempt count ({attempt_count})."
+            )
+            return self.AnalyzeResult([0, 0, 0, 0], str(attempt_count))
 
         # --- 原有的次数超限检查 ---
         count = NOT_FC_SONG_COUNT_DICT.get(current_song_id, 0)
 
         if count >= MAX_NOT_FC_COUNT:
             logging.warning(
-                f"Condition check: Song '{current_song_name}' has reached the non-FC limit ({count})."
+                f"Song '{current_song_name}' has reached the non-FC limit ({count})."
             )
             return self.AnalyzeResult([0, 0, 0, 0], str(count))
 
@@ -554,7 +564,7 @@ class UIPlayResult(CustomRecognition):
 @maaresource.custom_action("UISavePlayResult")
 class UISavePlayResult(CustomAction):
     def run(self, context, argv):
-        global PLAY_FAILED_TIMES, NOT_FC_SONG_COUNT_DICT
+        global PLAY_FAILED_TIMES, NOT_FC_SONG_COUNT_DICT, LAST_PLAYED_SONG_ID, SONG_ATTEMPT_COUNT_DICT
 
         # Improved handling of the 'succeed' parameter.
         succeed = False
@@ -597,27 +607,26 @@ class UISavePlayResult(CustomAction):
                     # 如果满足AP条件，我们就可以100%确信这是一个FC。
                     # 因此，直接判定 is_not_fc 为 False，并跳过所有后续的“非FC”检查。
                     is_not_fc = False
-                    logging.info("通过P+G与MaxCombo校验，判定为视为FC。")
                 else:
                     # 3. 如果【乐观检查】不通过，则执行之前的【保守检查】(Pessimistic Check)
 
                     # a. 检查数据完整性
                     if -1 in [perfect, great, good, bad, miss, maxcombo]:
                         is_not_fc = True
-                        reasons.append("一个或多个结算数值识别失败(值为-1)")
+                        reasons.append("OCR Failed")
                     else:
                         # b. 如果所有数值都有效，再进行游戏逻辑判断
                         if bad > 0:
-                            reasons.append(f"存在Bad(数量:{bad})")
+                            reasons.append(f"Bad: {bad}")
                         if miss > 0:
-                            reasons.append(f"存在Miss(数量:{miss})")
+                            reasons.append(f"Miss: {miss}")
                         if good > 0:
-                            reasons.append(f"存在Good(数量:{good})")
+                            reasons.append(f"Good: {good}")
 
                         # c. 交叉验证 (P+G+Gd vs MaxCombo)
-                        sum_of_judgements = perfect + great + good
+                        sum_of_judgements = perfect + great
                         if maxcombo != sum_of_judgements:
-                            reasons.append(f"判定总和与MaxCombo不符 (P+G+Gd={sum_of_judgements}, Combo={maxcombo})")
+                            reasons.append(f"P+G={sum_of_judgements}, MaxCombo={maxcombo}")
 
                         if reasons:
                             is_not_fc = True
@@ -631,7 +640,7 @@ class UISavePlayResult(CustomAction):
                     logging.warning(
                         f"Song '{current_song_name}' did not achieve a Full Combo. "
                         f"Total count: {NOT_FC_SONG_COUNT_DICT[current_song_id]}"
-                        f"reasons: {', '.join(reasons)}"
+                        f"Reasons: {', '.join(reasons)}"
                     )
 
             except json.JSONDecodeError:
@@ -653,6 +662,15 @@ class UISavePlayResult(CustomAction):
             play_time=int(time.time()), play_offset=OFFSET, result=play_result,
             succeed=succeed, chart_id=current_song_id, difficulty=DIFFICULTY,
         )
+
+        # --- 新增：无条件更新总尝试次数 ---
+        if current_song_id:
+            current_attempts = SONG_ATTEMPT_COUNT_DICT.get(current_song_id, 0)
+            SONG_ATTEMPT_COUNT_DICT[current_song_id] = current_attempts + 1
+            logging.info(f"Song '{current_song_name}' has been attempted {SONG_ATTEMPT_COUNT_DICT[current_song_id]} times.")
+
+        # --- 在函数末尾记录上一首歌曲 ---
+        LAST_PLAYED_SONG_ID = current_song_id
 
         if PLAY_FAILED_TIMES >= MAX_CONTINUOUS_FAILED_TIMES:
             logging.error(f"Continuous failure limit reached ({MAX_CONTINUOUS_FAILED_TIMES}). Stopping automatically.")
@@ -761,7 +779,7 @@ def run_simplified_autodori(config_data):
 
 def run_full_auto_mode(config_data):
     """Full auto mode with failure stop and non-FC skip functionality."""
-    global DIFFICULTY, IS_FULL_SONG, HUMAN_DELAY_ENABLED, PLAY_FAILED_TIMES, NOT_FC_SONG_COUNT_DICT, MAX_NOT_FC_COUNT
+    global DIFFICULTY, IS_FULL_SONG, HUMAN_DELAY_ENABLED, PLAY_FAILED_TIMES, NOT_FC_SONG_COUNT_DICT, MAX_NOT_FC_COUNT, MAX_SONG_ATTEMPTS
 
     DIFFICULTY = config_data.get("difficulty", "hard")
     IS_FULL_SONG = config_data.get("is_full_song", False)
@@ -770,6 +788,7 @@ def run_full_auto_mode(config_data):
     # Get the value from config_data and update the global variable
     # Use .get() with a default value of 1 for safety
     MAX_NOT_FC_COUNT = config_data.get("max_not_fc_count", 1)
+    MAX_SONG_ATTEMPTS = config_data.get("max_song_attempts", 3)
 
     PLAY_FAILED_TIMES = 0
     NOT_FC_SONG_COUNT_DICT.clear()
