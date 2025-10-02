@@ -43,7 +43,7 @@ class AutodoriGUI:
         self.difficulty_var = tk.StringVar(value=autodori_ui.DIFFICULTY)
         self.isfull_var = tk.BooleanVar(value=autodori_ui.IS_FULL_SONG)
         self.human_var = tk.BooleanVar(value=autodori_ui.HUMAN_DELAY_ENABLED)
-        self.max_not_fc_var = tk.IntVar(value=autodori_ui.MAX_NOT_FC_COUNT)
+        self.max_continuous_not_fc_var = tk.IntVar(value=autodori_ui.MAX_CONTINUOUS_NOT_FC_COUNT)
         self.max_attempt_var = tk.IntVar(value=autodori_ui.MAX_SONG_ATTEMPTS)
 
         # --- 绑定状态追踪 ---
@@ -318,7 +318,7 @@ class AutodoriGUI:
         # --- 修改：将FC相关控件放入独立的Frame中 ---
         self.fc_options_frame = ttk.Frame(options_frame)
         ttk.Label(self.fc_options_frame, text="未FC跳过阈值：").pack(side=tk.LEFT, padx=(5, 0))
-        ttk.Spinbox(self.fc_options_frame, from_=1, to=99, textvariable=self.max_not_fc_var, width=5).pack(side=tk.LEFT, padx=3)
+        ttk.Spinbox(self.fc_options_frame, from_=1, to=99, textvariable=self.max_continuous_not_fc_var, width=5).pack(side=tk.LEFT, padx=3)
         ttk.Label(self.fc_options_frame, text="最大尝试次数：").pack(side=tk.LEFT, padx=(5, 0))
         ttk.Spinbox(self.fc_options_frame, from_=1, to=99, textvariable=self.max_attempt_var, width=5).pack(side=tk.LEFT, padx=3)
 
@@ -550,7 +550,7 @@ class AutodoriGUI:
             "difficulty": self.difficulty_var.get(),
             "is_full_song": self.isfull_var.get(),
             "human_delay": self.human_var.get(),
-            "max_not_fc_count": self.max_not_fc_var.get(),
+            "max_not_fc_count": self.max_continuous_not_fc_var.get(),
             "max_attempt_count": self.max_attempt_var.get()
         }
         self.bot_thread = threading.Thread(target=self._run_bot_task, args=(config_data,), daemon=True)

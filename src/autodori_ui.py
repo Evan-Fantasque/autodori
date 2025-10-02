@@ -56,11 +56,11 @@ DEFAULT_MOVE_SLICE_SIZE = 10
 CMD_SLICE_SIZE = 100
 MAX_CONTINUOUS_FAILED_TIMES = 10
 STABLE_THRESHOLD = 3
-CONSECUTIVE_FRAMES_NEEDED = 100
-FREEZE_SLEEP_TIME = 0.01
+CONSECUTIVE_FRAMES_NEEDED = 150
+FREEZE_SLEEP_TIME = 0.005
 CONFIDENCE_THRESHOLD_FAILURE = 0.8
 CONFIDENCE_THRESHOLD_PLAY = 0.4
-MAX_NOT_FC_COUNT = 1 # A song will be skipped after failing to achieve a Full Combo this many times.
+MAX_CONTINUOUS_NOT_FC_COUNT = 2 # A song will be skipped after failing to achieve a Full Combo this many times.
 MAX_SONG_ATTEMPTS = 3 # 每首歌在一次任务中最多尝试3次
 PLAY_FAILED_TIMES = 0
 DIFFICULTY = "hard"
@@ -425,18 +425,18 @@ class UICheckFCStatusRecognition(CustomRecognition):
     """
 
     def analyze(self, context: Context, argv: CustomRecognition.AnalyzeArg):
-        global NOT_FC_SONG_COUNT_DICT, current_song_id, current_song_name, MAX_NOT_FC_COUNT
+        global NOT_FC_SONG_COUNT_DICT, current_song_id, current_song_name, MAX_CONTINUOUS_NOT_FC_COUNT
 
         if not current_song_id:
             return self.AnalyzeResult(None, "")
 
-        # --- 新增的熔断检查 ---
+        """# --- 新增的熔断检查 ---
         # 如果当前选择的歌曲和上一首是同一首，则强制跳过
         if current_song_id == LAST_PLAYED_SONG_ID:
             logging.warning(
                 f"Song '{current_song_name}' is the same as the last one, force random song."
             )
-            return self.AnalyzeResult([0, 0, 0, 0], "repeated")
+            return self.AnalyzeResult([0, 0, 0, 0], "repeated")"""
 
         # 2. 新增的总尝试次数检查
         attempt_count = SONG_ATTEMPT_COUNT_DICT.get(current_song_id, 0)
@@ -449,10 +449,11 @@ class UICheckFCStatusRecognition(CustomRecognition):
         # --- 原有的次数超限检查 ---
         count = NOT_FC_SONG_COUNT_DICT.get(current_song_id, 0)
 
-        if count >= MAX_NOT_FC_COUNT:
+        if count >= MAX_CONTINUOUS_NOT_FC_COUNT:
             logging.warning(
                 f"Song '{current_song_name}' has reached the non-FC limit ({count})."
             )
+            NOT_FC_SONG_COUNT_DICT[current_song_id] = 0
             return self.AnalyzeResult([0, 0, 0, 0], str(count))
 
         return self.AnalyzeResult(None, "")
@@ -797,7 +798,7 @@ def run_simplified_autodori(config_data):
 
 def run_full_auto_mode(config_data):
     """Full auto mode with failure stop and non-FC skip functionality."""
-    global DIFFICULTY, IS_FULL_SONG, HUMAN_DELAY_ENABLED, PLAY_FAILED_TIMES, NOT_FC_SONG_COUNT_DICT, MAX_NOT_FC_COUNT, MAX_SONG_ATTEMPTS
+    global DIFFICULTY, IS_FULL_SONG, HUMAN_DELAY_ENABLED, PLAY_FAILED_TIMES, NOT_FC_SONG_COUNT_DICT, MAX_CONTINUOUS_NOT_FC_COUNT, MAX_SONG_ATTEMPTS
 
     DIFFICULTY = config_data.get("difficulty", "hard")
     IS_FULL_SONG = config_data.get("is_full_song", False)
@@ -805,14 +806,14 @@ def run_full_auto_mode(config_data):
 
     # Get the value from config_data and update the global variable
     # Use .get() with a default value of 1 for safety
-    MAX_NOT_FC_COUNT = config_data.get("max_not_fc_count", 1)
+    MAX_CONTINUOUS_NOT_FC_COUNT = config_data.get("max_not_fc_count", 1)
     MAX_SONG_ATTEMPTS = config_data.get("max_song_attempts", 3)
 
     PLAY_FAILED_TIMES = 0
     NOT_FC_SONG_COUNT_DICT.clear()
 
     # Add a log to confirm the setting was received
-    logging.info(f"Non-FC Skip Limit set to: {MAX_NOT_FC_COUNT}")
+    logging.info(f"Non-FC Skip Limit set to: {MAX_CONTINUOUS_NOT_FC_COUNT}")
 
     if not maacontroller or not mnt: raise RuntimeError("MAA is not initialized.")
 
