@@ -840,6 +840,10 @@ def run_full_auto_mode(config_data):
                 "get_song_name",
                 "random_choice_song_action"
             ],
+            "interrupt": [
+                "liveagain",
+                "live_home_button"
+            ] + result_screen_interrupts
         },
         "get_song_name": {
             "recognition": "Custom",
@@ -937,7 +941,7 @@ def run_full_auto_mode(config_data):
                 "expected": "自由演出",
                 "roi": [679, 183, 257, 354],
                 "action": "Click",
-                "post_delay": 1000,
+                "post_delay": 1500,
                 "next": [
                     "select_song",
                     "select_live_mode",
@@ -989,6 +993,14 @@ def run_full_auto_mode(config_data):
                 "stop"
             ],
             "interrupt": result_screen_interrupts
+        },
+        "liveagain": {
+            "recognition": "TemplateMatch",
+            "template": "live/button/liveagain.png",
+            "pre_wait_freezes": {"threshold": 0.65, "time": 5000},
+            "action": "Click",
+            "next": "select_song",
+            "post_delay": 2000
         },
     }
     # Merge common definitions into the pipeline
