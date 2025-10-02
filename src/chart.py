@@ -1,30 +1,45 @@
-import json
 import logging
+import random
 import time
 from pathlib import Path
 
+import yaml
 from minitouchpy import CommandBuilder
 from peewee import *
 from playhouse.sqlite_ext import JSONField
 
 import util
 from api import BestdoriAPI
-import yaml
+import json
+import datetime
 
 
-class PlayRecord(Model):
-    class Meta:
-        database = SqliteDatabase("data/play_records.db")
-
-    play_time = TimestampField()
-    play_offset = JSONField()
-    chart_id = CharField()
-    difficulty = CharField()
-    succeed = BooleanField()
-    result = JSONField()
-
-
-PlayRecord.create_table(safe=True)
+class PlayRecord:
+    _save_path = Path("data/play_records.jsonl")
+    @classmethod
+    def create(cls, **kwargs):
+        """
+        接收数据并将其作为新的一行追加到 .jsonl 文件中。
+        参数 (**kwargs) 应该包含:
+        play_time, play_offset, chart_id, difficulty, succeed, result
+        """
+        # 1. 确保数据目录存在
+        cls._save_path.parent.mkdir(exist_ok=True)
+        # 2. 准备要保存的数据字典
+        # 我们直接使用传入的kwargs，并可以补充一些易读信息
+        record = kwargs.copy()
+        # 将Unix时间戳转换为人类可读的ISO格式字符串
+        record['play_time_iso'] = datetime.datetime.fromtimestamp(record['play_time']).isoformat()
+        try:
+            # 3. 将字典转换为紧凑的JSON字符串
+            # ensure_ascii=False 确保非英文字符能正确保存
+            # separators 可以移除不必要的空格，让每行更紧凑
+            json_line = json.dumps(record, ensure_ascii=False, separators=(',', ':'))
+            # 4. 以追加模式打开文件，并将JSON字符串作为新行写入
+            with open(cls._save_path, 'a', encoding='utf-8') as f:
+                f.write(json_line + '\n')
+        except Exception as e:
+            logging.error(f"将演奏记录写入到 {cls._save_path} 时发生错误: {e}")
 
 
 class Chart:
@@ -49,7 +64,7 @@ class Chart:
             return 0
 
         def _get_time_for_section(
-            bpm: float, previous_bpm_beat: float, current_bpm_beat: float
+                bpm: float, previous_bpm_beat: float, current_bpm_beat: float
         ) -> float:
             return (current_bpm_beat - previous_bpm_beat) * (60.0 / bpm) if bpm else 0
 
@@ -101,17 +116,16 @@ class Chart:
                     if not connection.get("hidden", False):
                         connection["checkpoint_index"] = get_checkpoint_index()
             else:
-                self._logger.warning(
-                    f"_chart_to_time_chart: Unknown type: {note_type}, Skipped"
-                )
+                pass
         self._logger.debug(
             f"_chart_to_time_chart: Succeed: {len(self._chart_data)} notes"
         )
 
     def notes_to_actions(
-        self,
-        screen_resolution: tuple[int, int],
-        default_move_slice_size,
+            self,
+            screen_resolution: tuple[int, int],
+            default_move_slice_size,
+            humanize: bool = True,
     ):
         notes: list[dict] = self._chart_data
 
@@ -134,8 +148,8 @@ class Chart:
         def get_finger(from_time, to_time) -> int:
             for finger in available_fingers:
                 if any(
-                    not (to_time <= occupied_from or from_time >= occupied_to)
-                    for occupied_from, occupied_to in finger["occupied_time"]
+                        not (to_time <= occupied_from or from_time >= occupied_to)
+                        for occupied_from, occupied_to in finger["occupied_time"]
                 ):
                     continue
                 else:
@@ -176,15 +190,15 @@ class Chart:
             return result
 
         def add_smooth_move(
-            note_index,
-            finger,
-            from_time,
-            duration,
-            from_,
-            to,
-            slice_size=default_move_slice_size,
-            down=True,
-            up=True,
+                note_index,
+                finger,
+                from_time,
+                duration,
+                from_,
+                to,
+                slice_size=default_move_slice_size,
+                down=True,
+                up=True,
         ):
             to_time = from_time + duration
             from_x, from_y = from_
@@ -329,12 +343,64 @@ class Chart:
                     }
                 )
             else:
-                logging.warning(f"notes_to_actions: Unknown type: {note_type}")
+                logging.debug(f"notes_to_actions: Unknown type: {note_type}")
 
         actions.sort(key=lambda x: x["time"])
         actions: list[dict]
 
         actions_with_wait: list[dict] = []
+        if humanize:
+            # =================== “分而治之”参数配置 ===================
+            # 1. 定义不同打击倾向的“占比” (三者相加建议为 1.0)
+            EARLY_HIT_PROBABILITY = 0.025  # “抢拍”
+            LATE_HIT_PROBABILITY = 0.025  # “拖拍”
+
+            # 2. 定义不同倾向的“偏移范围” (毫秒), 基于 Perfect 区间 (-33ms, +50ms)
+            EARLY_HIT_RANGE_MS = (-26, -22)  # 抢拍范围
+            LATE_HIT_RANGE_MS = (26, 32)  # 拖拍范围
+
+            # 3. 按键的微小随机持续时长
+            TINY_DURATION_RANGE_MS = (20, 30)
+            # ==========================================================
+
+            note_map = {note.get('index'): note for note in self._chart_data if note.get('index') is not None}
+            note_down_times = {}
+
+            for action in actions:
+                note_index = action.get('note')
+                original_note = note_map.get(note_index)
+
+                if (original_note and
+                        original_note.get('type') == 'Single' and
+                        not original_note.get('flick', False)):
+
+                    if action['type'] == 'down':
+                        # --- 核心决策逻辑 ---
+                        dice_roll = random.random()
+
+                        if dice_roll < EARLY_HIT_PROBABILITY:
+                            # 判定为“抢拍型”
+                            random_jitter = -30
+                        elif dice_roll < EARLY_HIT_PROBABILITY + LATE_HIT_PROBABILITY:
+                            # 判定为“拖拍型”
+                            random_jitter = 30
+                        else:
+                            # 判定为“标准型”
+                            random_jitter = random.randint(-5, 5)
+
+                        new_down_time = action['time'] + random_jitter
+                        action['time'] = new_down_time
+                        note_down_times[note_index] = new_down_time
+
+                    elif action['type'] == 'up':
+                        if note_index in note_down_times:
+                            down_time = note_down_times[note_index]
+                            action['time'] = down_time + random.randint(15, 25)
+
+        # 随机化后需要重新排序 (此部分代码保持不变)
+        actions.sort(key=lambda x: x["time"])
+
+        # 根据最终带有偏移的时间，重新计算等待间隔 (此部分代码保持不变)
         for i, action in enumerate(actions):
             actions_with_wait.append(action)
             if i != len(actions) - 1:
@@ -362,7 +428,7 @@ class Chart:
         self.command_builder = CommandBuilder()
         builder = self.command_builder
         actions = self.actions[
-            self.actions_to_cmd_index : self.actions_to_cmd_index + size
+            self.actions_to_cmd_index: self.actions_to_cmd_index + size
         ]
         commands = self._commands
 
@@ -457,7 +523,7 @@ class Chart:
         dump_path = Path("debug/dump")
         dump_path.mkdir(parents=True, exist_ok=True)
         (
-            dump_path / f"{self._song_name}-{self._difficulty}-{time.time()}.yml"
+                dump_path / f"{self._song_name}-{self._difficulty}-{time.time()}.yml"
         ).write_text(
             yaml.safe_dump(
                 {
