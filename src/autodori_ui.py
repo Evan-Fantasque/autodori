@@ -1,4 +1,3 @@
-import base64
 import json
 import logging
 import re
@@ -67,6 +66,7 @@ PLAY_FAILED_TIMES = 0
 DIFFICULTY = "hard"
 HUMAN_DELAY_ENABLED = False
 IS_FULL_SONG = False
+SUPPORTED_DIFFICULTIES = ['easy', 'normal', 'hard', 'expert', 'special']
 OFFSET = {"up": 0, "down": 0, "move": 0, "wait": 0.0, "interval": 0.0}
 NOT_FC_SONG_COUNT_DICT: dict[str, int] = {} # Global variable to track songs that were not Full Combo'd.
 LAST_PLAYED_SONG_ID: Optional[str] = None # <-- 新增：记录上一首歌曲ID的变量
@@ -174,13 +174,14 @@ def monitor_failure_thread(stop_event, playback_started_event):
     It waits for the playback start signal, then continuously monitors for the "Live Failed" screen through image matching.
     """
     try:
-        logging.info("Monitor thread started, waiting for playback start signal...")
+        logging.info("Monitor thread started, waiting for playback start signal.")
 
         # Wait for "playback started" signal from play_song function, timeout after 60s
         playback_started_event.wait(timeout=30)
 
         if not playback_started_event.is_set():
             logging.warning("Timeout waiting for playback start signal, monitor thread exiting.")
+            stop_event.set()
             return
 
         logging.info("Received playback start signal, starting screen monitoring.")
@@ -191,6 +192,7 @@ def monitor_failure_thread(stop_event, playback_started_event):
         if not fail_template_path.exists():
             logging.error(
                 f"Live Failed template image not found: {fail_template_path}, monitor thread cannot work.")
+            stop_event.set()
             return
 
         template = cv2.imread(str(fail_template_path), 0)
@@ -218,18 +220,25 @@ def monitor_failure_thread(stop_event, playback_started_event):
 
     except Exception as e:
         logging.error(f"Monitor thread encountered unexpected error: {e}", exc_info=True)
+        stop_event.set()
     finally:
         logging.info("Monitor thread terminated.")
 
 def play_song(stop_event, playback_started_event):
     """
-    Core playback function with performance optimizations.
+    Core playback function with performance optimisations.
     """
     cmd_log_list.clear()
     reset_callback_data()
+    def check_exit_status():
+        if stop_event.is_set():
+            logging.warning("Playback failed, exiting.")
+            return True
+        else:
+            return False
 
     # STAGE 1: Wait for the game to load by detecting the pause button
-    logging.info("Waiting for game to load, detecting pause button...")
+    logging.info("Waiting for game to load, detecting pause button.")
     template_path = resource_path("assets/resource/image/live/button/pause.png")
     if not template_path.exists():
         logging.error(f"Pause button template image not found: {template_path}")
@@ -241,9 +250,12 @@ def play_song(stop_event, playback_started_event):
     pause_button_found = False
     wait_start_time = time.time()
     while not pause_button_found:
-        timeout=30
-        if time.time() - wait_start_time > timeout:
-            logging.error(f"Timeout ({timeout}s) waiting for pause button. Aborting playback.")
+        wait_timeout=30
+        wait_current_time=time.time()
+        if wait_current_time - wait_start_time > wait_timeout:
+            logging.error(f"Waiting for pause button timeout ({wait_current_time - wait_start_time}s), aborting.")
+            return
+        if check_exit_status():
             return
         screen = current_player.ipc_capture_display()
         height, width, _ = screen.shape
@@ -251,14 +263,14 @@ def play_song(stop_event, playback_started_event):
         gray_roi = cv2.cvtColor(roi_screen, cv2.COLOR_BGR2GRAY)
         result = cv2.matchTemplate(gray_roi, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, _ = cv2.minMaxLoc(result)
-        logging.debug(f"Waiting for pause button... match confidence: {max_val:.2f}")
+        logging.debug(f"Waiting for pause button, match confidence: {max_val:.2f}")
         if max_val >= CONFIDENCE_THRESHOLD_PLAY:
             pause_button_found = True
         else:
             time.sleep(0.5)
 
     # STAGE 2 & 3: Wait for screen to freeze & photogate detection
-    logging.info("Waiting for screen to freeze...")
+    logging.info("Waiting for screen to freeze.")
 
     def _adjust_offset():
         global callback_data
@@ -282,7 +294,15 @@ def play_song(stop_event, playback_started_event):
     last_color, waited_frames, freezed = None, 0, False
     info = get_runtime_info(current_player.resolution)["wait_first"]
     from_row, to_row = info["from"], info["to"]
+    playback_start_time=time.time()
     while True:
+        playback_timeout=500
+        playback_current_time=time.time()
+        if playback_current_time - playback_start_time > playback_timeout:
+            logging.error(f"Playback timeout ({playback_current_time - playback_start_time}s), aborting.")
+            return
+        if check_exit_status():
+            return
         try:
             screen = current_player.ipc_capture_display()
             cur_color, _ = get_color_eval_in_range(screen, from_row, to_row)
@@ -293,7 +313,7 @@ def play_song(stop_event, playback_started_event):
                     time.sleep(PHOTOGATE_LATENCY / 1000)
                     break
                 elif not freezed:
-                    logging.info(f"Color change delta: {change_score}, waited_frames: {waited_frames}")
+                    logging.debug(f"Color change delta: {change_score}, waited_frames: {waited_frames}")
                     if change_score < STABLE_THRESHOLD:
                         waited_frames += 1
                     else:
@@ -309,10 +329,9 @@ def play_song(stop_event, playback_started_event):
 
     # STAGE 4: Command execution loop
     playback_started_event.set()
-    logging.info("Starting command execution...")
+    logging.info("Starting command execution.")
     while True:
-        if stop_event.is_set():
-            logging.warning("Playback failed, exiting.")
+        if check_exit_status():
             return
         current_chart.command_builder.publish(mnt, block=False)
         wait_time = _get_wait_time()
@@ -377,7 +396,7 @@ def init_maa():
 
 def init_player_and_mnt():
     global current_player, mnt
-    if not device: raise RuntimeError("MAA device not initialized before initializing player.")
+    if not device: raise RuntimeError("MAA device not initialized before initialising player.")
     extra_config = device.config["extras"]
     if "mumu" in extra_config:
         type_, config_key = "mumu", "mumu"
@@ -567,7 +586,6 @@ class UISavePlayResult(CustomAction):
         global PLAY_FAILED_TIMES, NOT_FC_SONG_COUNT_DICT, LAST_PLAYED_SONG_ID, SONG_ATTEMPT_COUNT_DICT
 
         # Improved handling of the 'succeed' parameter.
-        succeed = False
         param = argv.custom_action_param
         try:
             succeed = json.loads(param).get("succeed", False)
@@ -772,7 +790,7 @@ def run_simplified_autodori(config_data):
             "timeout": 500000
         },
     }
-    logging.info("Submitting Single Song Mode auto-play task...")
+    logging.info("Submitting Single Song Mode auto-play task.")
     maatasker.post_task("ui_simplified_entry", override_pipeline).wait()
     logging.info("Single Song Mode auto-play task finished.")
 
@@ -929,7 +947,7 @@ def run_full_auto_mode(config_data):
                     "connect_failed"
                 ],
         },
-        # --- Optimized Results Screen Flow ---
+        # --- Optimised Results Screen Flow ---
         "wait_for_result_screen": {
             "recognition": "TemplateMatch",
             "template": [
@@ -975,6 +993,6 @@ def run_full_auto_mode(config_data):
     # Merge common definitions into the pipeline
     override_pipeline.update(common_pipeline_def)
 
-    logging.info("Submitting Full Auto Mode auto-play task...")
+    logging.info("Submitting Full Auto Mode auto-play task.")
     maatasker.post_task("select_song", override_pipeline).wait()
     logging.info("Full Auto Mode auto-play task finished or stopped.")

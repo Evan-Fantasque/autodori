@@ -35,6 +35,8 @@ class AutodoriGUI:
         master.geometry("650x550")
 
         self.bot_thread = None
+        self.is_float_mode = False
+        self.float_window = None # Toplevel 实例
 
         # --- 为UI控件创建Tkinter变量 ---
         self.mode_var = tk.StringVar(value='full_auto')
@@ -168,13 +170,101 @@ class AutodoriGUI:
         self.disclaimer_frame.destroy()
         self._create_main_widgets()
 
-        # --- 在主界面创建后，再启动日志系统 ---
-        queue_handler = QueueHandler(self.log_queue)
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        queue_handler.setFormatter(formatter)
-        logging.getLogger().addHandler(queue_handler)
-        logging.getLogger().setLevel(logging.INFO)
-        self.master.after(100, self._process_log_queue)
+    def _create_float_window(self):
+        """创建并配置悬浮窗。"""
+        self.float_window = tk.Toplevel(self.master)
+        self.float_window.title("Autodori Float")
+
+        # 移除窗口装饰 (标题栏和边框)
+        self.float_window.overrideredirect(True)
+
+        # 始终保持在最上方
+        self.float_window.attributes('-topmost', True)
+
+        # 设置透明度 (可选，但常用)
+        # self.float_window.attributes('-alpha', 0.9)
+
+        # 绑定鼠标拖动事件
+        self.float_window.bind("<ButtonPress-1>", self._start_drag)
+        self.float_window.bind("<B1-Motion>", self._drag_window)
+
+        # 隐藏主窗口 (可选：如果想完全隐藏主UI)
+        self.master.withdraw()
+
+        self.float_window.protocol("WM_DELETE_WINDOW", self.exit_float_mode)
+
+        # 标记当前模式
+        self.is_float_mode = True
+
+        self._create_float_widgets(self.float_window)
+
+    def _create_float_widgets(self, parent):
+        """填充悬浮窗的UI内容 (日志、按钮)，并使其紧凑。"""
+
+        # 1. 控件容器 Frame：减小 padding 和 borderwidth
+        # padding=1 边距非常小
+        main_frame = ttk.Frame(parent, padding=1, relief=tk.RAISED, borderwidth=1)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # 2. 按钮 Frame：移除垂直间距 pady
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X)  # 移除 pady=(0, 5)
+
+        # 停止按钮：简化文本
+        float_stop_button = ttk.Button(button_frame, text="停止", command=self.stop_bot)
+        # padx=1 减小按钮间的水平间距
+        float_stop_button.pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
+        self.float_stop_button = float_stop_button
+
+        # 退出悬浮模式按钮：简化文本
+        exit_float_button = ttk.Button(button_frame, text="主界面", command=self.exit_float_mode)
+        exit_float_button.pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
+
+        # 退出程序按钮：简化文本
+        exit_app_button = ttk.Button(button_frame, text="退出", command=self.master.destroy)
+        exit_app_button.pack(side=tk.LEFT, padx=1)
+
+        # 3. 日志显示：减小默认尺寸
+        # height=5, width=30 减少日志区域的最小尺寸
+        LOG_FONT = ("Cascadia Mono", 8)  # 或 ("Arial", 10), ("Courier New", 7) 等
+
+        self.float_log_display = scrolledtext.ScrolledText(main_frame, state='disabled', wrap=tk.WORD,
+                                                           bg="#2b2b2b", fg="white",
+                                                           height=10, width=40,
+                                                           font=LOG_FONT)  # <<<--- 新增 font 参数
+
+        self.float_log_display.pack(fill=tk.BOTH, expand=True)
+
+        # 初始化按钮状态
+        self._update_float_button_state()
+
+    def exit_float_mode(self):
+        """退出悬浮窗模式，返回主控制面板。"""
+        if self.float_window:
+            self.float_window.destroy()
+            self.float_window = None
+            self.is_float_mode = False
+            self.master.deiconify()  # 显示主窗口
+
+    # --- 悬浮窗拖动逻辑 ---
+    def _start_drag(self, event):
+        """记录鼠标点击时的初始位置。"""
+        self._x = event.x
+        self._y = event.y
+
+    def _drag_window(self, event):
+        """计算并移动窗口。"""
+        deltax = event.x - self._x
+        deltay = event.y - self._y
+        x = self.float_window.winfo_x() + deltax
+        y = self.float_window.winfo_y() + deltay
+        self.float_window.geometry(f"+{x}+{y}")
+
+    def _update_float_button_state(self):
+        """同步更新悬浮窗的停止按钮状态。"""
+        if self.is_float_mode and hasattr(self, 'float_stop_button'):
+            is_running = (self.bot_thread and self.bot_thread.is_alive())
+            self.float_stop_button.config(state=tk.NORMAL if is_running else tk.DISABLED)
 
     def _create_main_widgets(self):
         """创建主控制面板的所有控件。"""
@@ -258,6 +348,8 @@ class AutodoriGUI:
         self.start_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
         self.stop_button = ttk.Button(control_frame, text="停止任务", command=self.stop_bot, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        self.float_button = ttk.Button(control_frame, text="进入悬浮窗", command=self._create_float_window)
+        self.float_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2) # 占据剩余空间
 
         log_frame = ttk.Frame(self.paned_window, padding="0")
         self.paned_window.add(log_frame, weight=1)
@@ -397,10 +489,51 @@ class AutodoriGUI:
         try:
             while True:
                 record = self.log_queue.get(block=False)
-                self.log_display.configure(state='normal')
-                self.log_display.insert(tk.END, record + '\n')
-                self.log_display.see(tk.END)
-                self.log_display.configure(state='disabled')
+                # --- 更新主窗口日志 ---
+                if hasattr(self, 'log_display'):
+                    self.log_display.configure(state='normal')
+                    self.log_display.insert(tk.END, record + '\n')
+                    self.log_display.see(tk.END)
+                    self.log_display.configure(state='disabled')
+
+                # --- 更新悬浮窗日志 ---
+                # --- 更新悬浮窗日志 (格式化) ---
+                if self.is_float_mode and hasattr(self, 'float_log_display'):
+
+                    # 原始格式: YYYY-MM-DD HH:MM:SS - [LEVEL] - MESSAGE
+
+                    try:
+                        # 1. 查找第一个分隔符 ' - [' 的起始位置 (用于时间)
+                        time_separator_index = record.find(' - [')
+
+                        # 2. 查找第二个分隔符 '] - ' 的起始位置 (用于消息)
+                        msg_separator_index = record.find('] - ')
+
+                        if time_separator_index != -1 and msg_separator_index != -1:
+
+                            # 提取 HH:MM:SS (从索引 11 开始到 time_separator_index 之前)
+                            time_part = record[time_separator_index - 8:time_separator_index]  # 提取 HH:MM:SS
+
+                            # 提取 [LEVEL] (从 time_separator_index + 3 开始，到 msg_separator_index 结束)
+                            level_part = record[time_separator_index + 3: msg_separator_index + 1]  # 提取 [LEVEL]
+
+                            # 提取 MESSAGE (从 msg_separator_index + 4 开始)
+                            message_part = record[msg_separator_index + 4:].strip()  # 提取 MESSAGE 并去除首尾空格
+
+                            # 组合新的紧凑格式: HH:MM:SS [LEVEL]消息
+                            # 注意: level_part 已经是 '[LEVEL]' 的形式，后面紧跟 message_part
+                            compact_record = f"{time_part}{level_part}{message_part}"
+                        else:
+                            compact_record = record.split(" - ", 2)[-1]  # 无法解析时，只保留消息
+
+                    except Exception:
+                        # 出现异常时（如索引错误），退回到只保留消息
+                        compact_record = record.split(" - ", 2)[-1]
+
+                    self.float_log_display.configure(state='normal')
+                    self.float_log_display.insert(tk.END, compact_record + '\n')
+                    self.float_log_display.see(tk.END)
+                    self.float_log_display.configure(state='disabled')
         except queue.Empty:
             pass
         self.master.after(100, self._process_log_queue)
@@ -408,6 +541,7 @@ class AutodoriGUI:
     def start_bot(self):
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
+        self._update_float_button_state() # <<<--- 新增：调用状态更新
         # --- 新增: 禁用全局变量选项卡 ---
         self.notebook.tab(1, state='disabled')
 
@@ -425,36 +559,37 @@ class AutodoriGUI:
     def stop_bot(self):
         # 优先设置停止信号，让内部循环能够尽快响应
         if hasattr(autodori_ui, 'stop_event'):
-            logging.info("正在发送停止信号以中断内部操作...")
+            logging.info("Sending stop signal to internal loop.")
             autodori_ui.stop_event.set()  # <-- 这是关键的新增行
 
         # 然后再通知maatasker停止任务流
         if hasattr(autodori_ui, 'maatasker') and autodori_ui.maatasker and autodori_ui.maatasker.running:
-            logging.info("正在尝试停止MAA任务调度器...")
+            logging.info("Attempting to stop maatasker.")
             autodori_ui.maatasker.post_stop()
         else:
-            logging.warning("任务未在运行或尚未初始化，无需停止。")
+            pass
 
     def _run_bot_task(self, config_data):
         try:
-            logging.info("正在初始化后端模块...")
+            logging.info("Initialising.")
             autodori_ui.init()
-            logging.info("初始化完成，开始执行自动任务...")
+            logging.info("Initialisation complete.")
 
             mode = config_data.get("mode")
             if mode == 'full_auto':
                 autodori_ui.run_full_auto_mode(config_data)
-            else:
+            elif mode == 'single':
                 autodori_ui.run_simplified_autodori(config_data)
 
-            logging.info("任务执行完毕。")
+            logging.info("Task completed.")
         except Exception as e:
-            logging.error(f"后端任务执行出错: {e}", exc_info=True)
+            logging.error(f"Exception: {e}", exc_info=True)
         finally:
             self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
             # --- 新增: 恢复全局变量选项卡 ---
             self.notebook.tab(1, state='normal')
+            self._update_float_button_state()  # <<<--- 新增：调用状态更新
 
     def _prevent_resize(self, event):
         """拦截并阻止PanedWindow的尺寸调整事件。"""
