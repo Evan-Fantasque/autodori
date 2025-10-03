@@ -24,6 +24,9 @@ class QueueHandler(logging.Handler):
         self.log_queue = log_queue
 
     def emit(self, record):
+        msg = record.getMessage()
+        if msg.startswith("send operation:"):
+            return  # 如果是，则直接返回，不将此日志放入GUI队列，从而实现拦截
         self.log_queue.put(self.format(record))
 
 
@@ -112,9 +115,9 @@ class AutodoriGUI:
         usage_frame = ttk.LabelFrame(self.disclaimer_frame, text="使用方法", padding="10")
         usage_frame.pack(fill=tk.X, pady=10)
         usage_text = (
-            "模拟器请设置为1920x1080分辨率。\n"
+            "模拟器分辨率请设置为16：9比例。\n"
             "歌曲难度请手动设置为与游戏中一致。\n"
-            "单曲模式：启动任务前，请手动进入自由、挑战、组曲模式下的「选择乐队」界面。\n"
+            "单曲模式：启动任务前，请手动进入自由、挑战模式下的「选择乐队」界面。\n"
             "全自动模式：启动任务前，请手动进入自由模式下的「选择乐曲」界面。"
         )
         self.usage_label = ttk.Label(usage_frame, text=usage_text, justify=tk.LEFT)
@@ -123,7 +126,7 @@ class AutodoriGUI:
         warning_frame = ttk.LabelFrame(self.disclaimer_frame, text="风险提示", padding="10")
         warning_frame.pack(fill=tk.X, pady=10)
         warning_text = (
-            "本程序仅于自由、挑战、组曲模式下进行开发与测试，不可用于协力模式。\n"
+            "本程序仅于自由、挑战模式下进行开发与测试，不可用于协力模式。\n"
             "程序运行期间，建议您时刻关注模拟器界面。若出现任何异常情况，请立即手动停止任务。\n"
             "使用本程序可能违反游戏的用户协议，您将自行承担一切潜在风险。开发者对由此产生的任何后果概不负责。"
         )

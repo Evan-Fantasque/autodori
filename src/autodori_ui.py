@@ -524,7 +524,6 @@ class UISongRecognitionFreeSingle(CustomRecognition):
         if not results: return self.AnalyzeResult(None, "")
         best_match = max(results, key=lambda x: x[1])
         if best_match and best_match[1] > 50:
-            logging.info(f"{IS_FULL_SONG},{IS_HIGH_DIFFICULTY}")
             if IS_FULL_SONG:
                 song_name = "[FULL] " + best_match[0]
             elif IS_HIGH_DIFFICULTY:

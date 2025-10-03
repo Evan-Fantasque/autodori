@@ -1,33 +1,27 @@
 <div align="center">
 
-# autodori  
+# autodori (GUI Version)
 
-邦多利小助手 | 📘 [English Version](./README.en.md)
+邦多利小助手
 
-![Pipeline](https://img.shields.io/badge/Pipeline-%23454545?logo=paddypower&logoColor=%23FFFFFF)  ![python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)  
+![Pipeline](https://img.shields.io/badge/Pipeline-%23454545?logo=paddypower&logoColor=%23FFFFFF)  ![python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
 
 </div>
 
+**致谢:** 本项目是基于 [EvATive7/autodori](https://github.com/EvATive7/autodori) 的命令行版本进行的二次开发，旨在改进稳定性并提供一个更易于使用的图形用户界面。所有核心功能和设计均归功于原作者。
+
 ## ✨ 功能
 
-- [x] 自动启动游戏、自动清火
-- [x] Windows、Mumu、MumuV5、雷电模拟器兼容
-- [x] 超低性能开销、低延迟、高精度
+- [x] **完整的图形用户界面 (GUI)**，操作直观便捷
+- [x] **两种运行模式**：
+    - **单曲模式**：自动演奏当前选择的一首歌曲后停止。
+    - **全自动模式**：自动循环选择歌曲并进行游戏，支持高级策略。
+- [x] **高级策略配置**：在全自动模式下，可设置“连续未达成FC则跳过”的阈值和“单首歌曲最大尝试次数”。
+- [x] **悬浮窗模式**：可切换至一个紧凑的、置顶的悬浮窗口，方便在游戏时监控日志和控制启停。
+- [x] **高级调试面板**：为开发者和高级用户提供全局变量的实时修改功能，方便进行参数调优。
+- [x] Windows、Mumu模拟器兼容
+- [x] 低延迟、高精度
 - [x] 国服可用
-- [ ] 自动收取奖励、自动每日三抽
-- [ ] Linux和Mac兼容、其它模拟器兼容（等待其它模拟器实现IPCAPI）兼容
-- [ ] 更高的精度和性能优化
-- [ ] 日服和全球服支持
-- [x] 战绩可查！👇
-
-![ ](./docs/achievements/六兆年.png)  
-*SP 六兆年と一夜物語 AP*
-
-![ ](./docs/achievements/火花.png)  
-*EX ヒバナ-Reloaded- AP*
-
-![ ](./docs/achievements/SENSENFUKOKU.png)  
-*EX SENSENFUKOKU AP*
 
 ## 🛠 使用方法
 
@@ -35,36 +29,35 @@
 > 讨论和开发QQ群：1044289381
 
 > [!IMPORTANT]  
-> 在使用此脚本之前，请确保前置条件：
+> 在使用此脚本之前，请确保满足以下前置条件：
 >
-> 1. 确保设备和模拟器性能足够
-> 1. 将模拟器分辨率设置为一个16:9的值，推荐 (1600, 900) 或 (1280, 720)
-> 1. 选曲列表“正常”，建议清空歌曲筛选器
-> 1. 在游戏“演出设定”中，将流速调整为8.0
-> 1. 在游戏“演出效果·音量设定”中，关闭“3D切入模式”，并将“动作模式”改为“轻量模式”
-> 1. 为了更好的体验，可以在游戏“演出效果·音量设定”中，启用“FAST/SLOW表示”和“Perfect状态显示”
-> 1. 启动模拟器且确保其adb功能正常
+> 1.  确保设备和模拟器性能足够。
+> 2.  将模拟器分辨率设置为一个16:9的值，推荐 (1600, 900) 或 (1280, 720)。
+> 3.  选曲列表“正常”，建议清空歌曲筛选器。
+> 4.  在游戏“演出设定”中，将流速调整为8.0。
+> 5.  在游戏“演出效果·音量设定”中，关闭“3D切入模式”，并将“动作模式”改为“轻量模式”。
+> 6.  为了更好的体验，可以在游戏“演出效果·音量设定”中，启用“FAST/SLOW表示”和“Perfect状态显示”。
+> 7.  启动模拟器且确保其adb功能正常。
 
 ### 适用于普通用户
 
-1. 从[release](https://github.com/EvATive7/autodori/releases)下载最新版  
-2. 解压，并运行`autodori.exe`
-3. 使用命令行`autodori.exe -h`可以查看更多选项
-4. 你可以修改 `data/config.yml` 来更改配置：[配置文件示例](./docs/config_eg/config.yml)
-
-### 如果你需要自行调参或修改代码来凹分 / 需要测试、开发，请从源码运行  
-
- 1. `git clone --recursive https://github.com/EvATive7/autodori`  
- 2. `cd autodori`  
- 3. `python -m venv .venv`  
- 4. `.venv\Scripts\activate`  
- 5. `pip install -r requirements.txt`
- 6. 执行`python build.py`（`build.py`会自动整理和下载必要的依赖项）
+1.  从 [release](https://github.com/Evan-Fantasque/autodori/releases) 下载最新版。
+2.  解压后，运行主程序（`autodori_gui.exe`）。
+3.  请仔细阅读“使用须知”并勾选同意条款，然后点击“进入控制面板”。
+4.  在控制面板中，根据您的需求进行配置：
+    * **模式**：选择“单曲模式”或“全自动模式”。
+    * **难度**：选择要进行的歌曲难度。
+    * **（可选）随机化按键**：模拟人类操作，但可能影响FC成功率。
+    * **（全自动模式专属）**：配置未FC跳过阈值和最大尝试次数。
+5.  **根据所选模式，在启动任务前，请务必将游戏停留在指定界面：**
+    * **单曲模式**：请手动进入自由、挑战模式下的「选择乐队」界面。
+    * **全自动模式**：请手动进入自由模式下的「选择乐曲」界面。
+6.  点击“启动任务”按钮开始运行。
 
 ## ⚠️ 注意
 
-1. 推荐使用最新版本的Mumu模拟器。在雷电模拟器上测试次数较少，且其似乎存在性能问题。
-1. 本项目尚不完善，可能发生错误。欢迎Issue和PR。
+1.  推荐使用最新版本的Mumu模拟器，未在其他模拟器上进行测试。
+2.  本项目尚不完善，可能发生错误。欢迎Issue和PR。
 
 ## 📝 风险、使用限制、免责声明、许可证和版权
 
