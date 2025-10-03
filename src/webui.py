@@ -135,9 +135,9 @@ def handle_autodori_task(data):
 
             if mode == 'full_auto':
                 autodori_ui.run_full_auto_mode(data)
-            else:  # 'single'
+            elif mode == 'single':
                 # 旧的 run_simplified_autodori 可能没有返回值，我们假设它执行完即成功
-                autodori_ui.run_simplified_autodori(data)
+                autodori_ui.run_single_mode_free(data)
 
             socketio.emit("task_finished", {"message": "自动演奏任务已完成。", "level": "SUCCESS"})
         except Exception as e:

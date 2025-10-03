@@ -41,13 +41,11 @@ class AutodoriGUI:
         # --- 为UI控件创建Tkinter变量 ---
         self.mode_var = tk.StringVar(value='full_auto')
         self.difficulty_var = tk.StringVar(value=autodori_ui.DIFFICULTY)
-        self.isfull_var = tk.BooleanVar(value=autodori_ui.IS_FULL_SONG)
         self.human_var = tk.BooleanVar(value=autodori_ui.HUMAN_DELAY_ENABLED)
         self.max_continuous_not_fc_var = tk.IntVar(value=autodori_ui.MAX_CONTINUOUS_NOT_FC_COUNT)
         self.max_attempt_var = tk.IntVar(value=autodori_ui.MAX_SONG_ATTEMPTS)
 
         # --- 绑定状态追踪 ---
-        self.isfull_var.trace_add('write', self._update_warnings)
         self.human_var.trace_add('write', self._update_warnings)
 
         # --- 设置日志队列 (用于GUI显示) ---
@@ -322,22 +320,15 @@ class AutodoriGUI:
         ttk.Label(self.fc_options_frame, text="最大尝试次数：").pack(side=tk.LEFT, padx=(5, 0))
         ttk.Spinbox(self.fc_options_frame, from_=1, to=99, textvariable=self.max_attempt_var, width=5).pack(side=tk.LEFT, padx=3)
 
-        # --- 修改：将FULL曲控件放入独立的Frame中 ---
-        self.full_song_frame = ttk.Frame(options_frame)
-        ttk.Checkbutton(self.full_song_frame, text="支持FULL曲", variable=self.isfull_var).pack(side=tk.LEFT)
-
         self.human_delay_frame = ttk.Frame(options_frame)
         self.human_delay_frame.pack(side=tk.LEFT, padx=5)
         ttk.Checkbutton(self.human_delay_frame, text="随机化按键", variable=self.human_var).pack(side=tk.LEFT)
 
         # 警告标签
-        self.full_song_warning_label = ttk.Label(warnings_frame, text="警告：成功率极低，请勿对没有FULL谱的歌曲使用",
-                                                 style="Warning.TLabel")
         self.human_delay_warning_label = ttk.Label(warnings_frame, text="警告：可能导致不能FC", style="Warning.TLabel")
 
         self.bg_color = style.lookup("TFrame", "background")
 
-        self.full_song_warning_label.pack(anchor='w')
         self.human_delay_warning_label.pack(anchor='w')
 
         self._update_warnings()
@@ -368,14 +359,11 @@ class AutodoriGUI:
         """当模式（单曲/全自动）切换时，动态显示或隐藏相关配置项。"""
         mode = self.mode_var.get()
         if mode == 'full_auto':
-            # 在全自动模式下：显示FC相关设置，隐藏FULL曲选项
-            self.full_song_frame.pack_forget()
+            # 在全自动模式下：显示FC相关设置
             self.fc_options_frame.pack(side=tk.LEFT, after=self.difficulty_combobox)
-            self.isfull_var.set(False)
         elif mode == 'single':
-            # 在单曲模式下：隐藏FC相关设置，显示FULL曲选项
+            # 在单曲模式下：隐藏FC相关设置
             self.fc_options_frame.pack_forget()
-            self.full_song_frame.pack(side=tk.LEFT, after=self.difficulty_combobox)
 
     def _create_globals_tab(self, parent_frame):
         """填充“全局变量调试”选项卡的内容"""
@@ -391,6 +379,8 @@ class AutodoriGUI:
             'FREEZE_SLEEP_TIME': float,
             'CONFIDENCE_THRESHOLD_FAILURE': float,
             'CONFIDENCE_THRESHOLD_PLAY': float,
+            'IS_FULL_SONG': bool,
+            'IS_HIGH_DIFFICULTY': bool
         }
 
         # --- 新增：本地化文本映射 ---
@@ -405,6 +395,8 @@ class AutodoriGUI:
             'FREEZE_SLEEP_TIME': "画面静止检测间隔时间 (s)",
             'CONFIDENCE_THRESHOLD_FAILURE': "失败检测置信度",
             'CONFIDENCE_THRESHOLD_PLAY': "歌曲开始检测置信度",
+            'IS_FULL_SONG': "FULL乐曲支持",
+            'IS_HIGH_DIFFICULTY': "超高难易度支持"
         }
 
         # 使用 grid 布局
@@ -436,6 +428,14 @@ class AutodoriGUI:
 
                     self.global_vars_entries[var_name][key] = entry_var
                     col_count += 2
+
+            elif var_type == bool:
+                # 使用 tk.BooleanVar 来存储复选框的状态 (True/False)
+                bool_var = tk.BooleanVar(value=getattr(autodori_ui, var_name))
+                checkbutton = ttk.Checkbutton(parent_frame, variable=bool_var)
+                checkbutton.grid(row=current_row, column=1, sticky='w', padx=5, pady=2)  # 使用 sticky='w' 左对齐
+                self.global_vars_entries[var_name] = bool_var
+
             else:  # int or float
                 entry_var = tk.StringVar(value=str(getattr(autodori_ui, var_name)))
                 entry = ttk.Entry(parent_frame, textvariable=entry_var)
@@ -477,6 +477,8 @@ class AutodoriGUI:
                         setattr(autodori_ui, var_name, int(new_val_str))
                     elif var_type == float:
                         setattr(autodori_ui, var_name, float(new_val_str))
+                    elif var_type == bool:
+                        setattr(autodori_ui, var_name, new_val_str)
 
             messagebox.showinfo("成功", "全局变量已成功更新！")
 
@@ -548,7 +550,6 @@ class AutodoriGUI:
         config_data = {
             "mode": self.mode_var.get(),
             "difficulty": self.difficulty_var.get(),
-            "is_full_song": self.isfull_var.get(),
             "human_delay": self.human_var.get(),
             "max_not_fc_count": self.max_continuous_not_fc_var.get(),
             "max_attempt_count": self.max_attempt_var.get()
@@ -579,7 +580,9 @@ class AutodoriGUI:
             if mode == 'full_auto':
                 autodori_ui.run_full_auto_mode(config_data)
             elif mode == 'single':
-                autodori_ui.run_simplified_autodori(config_data)
+                autodori_ui.run_single_mode_free(config_data)
+            elif mode == 'medley':
+                autodori_ui.run_single_mode_free(config_data)
 
             logging.info("Task completed.")
         except Exception as e:
@@ -600,14 +603,6 @@ class AutodoriGUI:
         通过改变文字颜色来显示或隐藏警告，而不是从布局中移除它们。
         这可以保持布局的稳定性。
         """
-        # 检查 '支持FULL曲' 的状态
-        if self.isfull_var.get():
-            # 勾选时，设置为红色
-            self.full_song_warning_label.config(foreground='red')
-        else:
-            # 未勾选时，设置为背景色（隐形）
-            self.full_song_warning_label.config(foreground=self.bg_color)
-
         # 检查 '随机化' 的状态
         if self.human_var.get():
             # 勾选时，设置为红色

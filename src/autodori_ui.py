@@ -58,14 +58,15 @@ MAX_CONTINUOUS_FAILED_TIMES = 10
 STABLE_THRESHOLD = 3
 CONSECUTIVE_FRAMES_NEEDED = 150
 FREEZE_SLEEP_TIME = 0.005
-CONFIDENCE_THRESHOLD_FAILURE = 0.8
-CONFIDENCE_THRESHOLD_PLAY = 0.4
+CONFIDENCE_THRESHOLD_FAILURE = 0.9
+CONFIDENCE_THRESHOLD_PLAY = 0.9
 MAX_CONTINUOUS_NOT_FC_COUNT = 2 # A song will be skipped after failing to achieve a Full Combo this many times.
 MAX_SONG_ATTEMPTS = 3 # 每首歌在一次任务中最多尝试3次
 PLAY_FAILED_TIMES = 0
 DIFFICULTY = "hard"
 HUMAN_DELAY_ENABLED = False
 IS_FULL_SONG = False
+IS_HIGH_DIFFICULTY = False
 SUPPORTED_DIFFICULTIES = ['easy', 'normal', 'hard', 'expert', 'special']
 OFFSET = {"up": 0, "down": 0, "move": 0, "wait": 0.0, "interval": 0.0}
 NOT_FC_SONG_COUNT_DICT: dict[str, int] = {} # Global variable to track songs that were not Full Combo'd.
@@ -167,6 +168,19 @@ def save_song(name):
     )
     logging.info(f"Saved song: {name}")
 
+def get_scaled_template(template_path):
+    template = cv2.imread(template_path, 0)
+    runtime_h, runtime_w, _ = current_player.ipc_capture_display().shape
+    scale_factor = runtime_w / 1920
+    if np.isclose(scale_factor, 1.0):
+        return template
+    original_h, original_w = template.shape[:2]
+    new_w = int(original_w * scale_factor)
+    new_h = int(original_h * scale_factor)
+    if new_w < 1 or new_h < 1:
+        return template
+    resized_template = cv2.resize(template, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    return resized_template
 
 def monitor_failure_thread(stop_event, playback_started_event):
     """
@@ -195,7 +209,7 @@ def monitor_failure_thread(stop_event, playback_started_event):
             stop_event.set()
             return
 
-        template = cv2.imread(str(fail_template_path), 0)
+        template = get_scaled_template(fail_template_path)
 
         # Monitor loop until stop signal received
         while not stop_event.is_set():
@@ -243,7 +257,7 @@ def play_song(stop_event, playback_started_event):
     if not template_path.exists():
         logging.error(f"Pause button template image not found: {template_path}")
         return
-    template = cv2.imread(str(template_path), 0)
+    template = get_scaled_template(template_path)
     if template is None:
         logging.error(f"Failed to load template image: {template_path}")
         return
@@ -463,7 +477,7 @@ class UICheckFCStatusRecognition(CustomRecognition):
 class UISongRecognitionMedley(CustomRecognition):
     def analyze(self, context: Context, argv: CustomRecognition.AnalyzeArg):
         # This ROI might need adjustment based on the actual screen layout.
-        roi = [110, 545, 368, 29]
+        roi = [110, 545, 370, 30]
 
         def ocr_and_match(model=None):
             try:
@@ -487,12 +501,45 @@ class UISongRecognitionMedley(CustomRecognition):
             return self.AnalyzeResult(roi, song_name)
         return self.AnalyzeResult(None, "")
 
-
-@maaresource.custom_recognition("UISongRecognition")
-class UISongRecognition(CustomRecognition):
+@maaresource.custom_recognition("UISongRecognitionFreeSingle")
+class UISongRecognitionFreeSingle(CustomRecognition):
     def analyze(self, context: Context, argv: CustomRecognition.AnalyzeArg):
         # This ROI might need adjustment based on the actual screen layout.
-        roi = [200, 332, 368, 29]
+        roi = [220, 545, 570, 30]
+
+        def ocr_and_match(model=None):
+            try:
+                pipeline = {"_ocr_song": {"recognition": "OCR", "roi": roi, "only_rec": True}}
+                if model: pipeline["_ocr_song"]["model"] = model
+                ocr_text = context.run_recognition("_ocr_song", argv.image, pipeline).best_result.text
+                logging.info(f"OCR ({model or 'default'}) raw text: '{ocr_text}'")
+                match = fuzzy_match_song(ocr_text)
+                logging.info(f"Fuzzy match result ({model or 'default'}): {match}")
+                return match
+            except Exception as e:
+                logging.error(f"OCR ({model or 'default'}) execution failed: {e}")
+                return None
+
+        results = [m for m in [ocr_and_match("ppocr_v3/ja_jp"), ocr_and_match()] if m]
+        if not results: return self.AnalyzeResult(None, "")
+        best_match = max(results, key=lambda x: x[1])
+        if best_match and best_match[1] > 50:
+            logging.info(f"{IS_FULL_SONG},{IS_HIGH_DIFFICULTY}")
+            if IS_FULL_SONG:
+                song_name = "[FULL] " + best_match[0]
+            elif IS_HIGH_DIFFICULTY:
+                song_name = "[超高難易度 SPECIAL] " + best_match[0]
+            else:
+                song_name = best_match[0]
+            logging.info(f"Song recognized: '{song_name}' (Confidence: {best_match[1]}%)")
+            return self.AnalyzeResult(roi, song_name)
+        return self.AnalyzeResult(None, "")
+
+@maaresource.custom_recognition("UISongRecognitionFreeAuto")
+class UISongRecognitionFreeAuto(CustomRecognition):
+    def analyze(self, context: Context, argv: CustomRecognition.AnalyzeArg):
+        # This ROI might need adjustment based on the actual screen layout.
+        roi = [200, 330, 370, 30]
 
         def ocr_and_match(model=None):
             try:
@@ -749,17 +796,16 @@ def init():
         raise e
 
 
-def run_simplified_autodori(config_data):
+def run_single_mode_free(config_data):
     """Single song mode: Plays one song and then stops."""
-    global DIFFICULTY, IS_FULL_SONG, HUMAN_DELAY_ENABLED
+    global DIFFICULTY, HUMAN_DELAY_ENABLED
     DIFFICULTY = config_data.get("difficulty", "expert")
-    IS_FULL_SONG = config_data.get("is_full_song", False)
     HUMAN_DELAY_ENABLED = config_data.get("human_delay", False)
     if not maacontroller or not mnt: raise RuntimeError("MAA is not initialized.")
     override_pipeline = {
         "ui_simplified_entry": {
             "recognition": "Custom",
-            "custom_recognition": "UISongRecognitionMedley",
+            "custom_recognition": "UISongRecognitionFreeSingle",
             "action": "Custom",
             "custom_action": "UISaveSong",
             "next": [
@@ -798,10 +844,9 @@ def run_simplified_autodori(config_data):
 
 def run_full_auto_mode(config_data):
     """Full auto mode with failure stop and non-FC skip functionality."""
-    global DIFFICULTY, IS_FULL_SONG, HUMAN_DELAY_ENABLED, PLAY_FAILED_TIMES, NOT_FC_SONG_COUNT_DICT, MAX_CONTINUOUS_NOT_FC_COUNT, MAX_SONG_ATTEMPTS
+    global DIFFICULTY, HUMAN_DELAY_ENABLED, PLAY_FAILED_TIMES, NOT_FC_SONG_COUNT_DICT, MAX_CONTINUOUS_NOT_FC_COUNT, MAX_SONG_ATTEMPTS
 
     DIFFICULTY = config_data.get("difficulty", "hard")
-    IS_FULL_SONG = config_data.get("is_full_song", False)
     HUMAN_DELAY_ENABLED = config_data.get("human_delay", False)
 
     # Get the value from config_data and update the global variable
@@ -835,7 +880,10 @@ def run_full_auto_mode(config_data):
     override_pipeline = {
         # --- Song Selection Flow ---
         "select_song": {
-            **live_pipeline_def["select_song"],
+            "recognition": "OCR",
+            "expected": [
+                "选择乐曲"
+            ],
             "next": [
                 "get_song_name",
                 "random_choice_song_action"
@@ -843,11 +891,12 @@ def run_full_auto_mode(config_data):
             "interrupt": [
                 "liveagain",
                 "live_home_button"
-            ] + result_screen_interrupts
+            ] + result_screen_interrupts,
+            "post_delay": 2000
         },
         "get_song_name": {
             "recognition": "Custom",
-            "custom_recognition": "UISongRecognition",
+            "custom_recognition": "UISongRecognitionFreeAuto",
             "action": "Custom",
             "custom_action": "UISaveSong",
             "next": [
@@ -895,7 +944,7 @@ def run_full_auto_mode(config_data):
         "startlive": {
             "action": "Click",
             "recognition": "TemplateMatch",
-            "pre_wait_freezes": {"time": 3000},
+            "pre_wait_freezes": {"threshold": 0.65, "time": 3000},
             "template": "live/button/startlive.png",
             "interrupt": [
                 "startlive",
@@ -903,7 +952,7 @@ def run_full_auto_mode(config_data):
                 "login_expired",
                 "connect_failed"
             ],
-            "post_delay": 2000,
+            "post_delay": 3000,
             "next": [
                 "playsong"
             ]
