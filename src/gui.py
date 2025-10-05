@@ -46,7 +46,7 @@ class AutodoriGUI:
         self.difficulty_var = tk.StringVar(value=autodori_ui.DIFFICULTY)
         self.human_var = tk.BooleanVar(value=autodori_ui.HUMAN_DELAY_ENABLED)
         self.max_continuous_not_fc_var = tk.IntVar(value=autodori_ui.MAX_CONTINUOUS_NOT_FC_COUNT)
-        self.max_attempt_var = tk.IntVar(value=autodori_ui.MAX_SONG_ATTEMPTS)
+        self.max_attempt_var = tk.IntVar(value=autodori_ui.MAX_ATTEMPT_COUNT)
 
         # --- 绑定状态追踪 ---
         self.human_var.trace_add('write', self._update_warnings)
