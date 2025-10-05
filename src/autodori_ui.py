@@ -61,7 +61,7 @@ FREEZE_SLEEP_TIME = 0.005
 CONFIDENCE_THRESHOLD_FAILURE = 0.9
 CONFIDENCE_THRESHOLD_PLAY = 0.9
 MAX_CONTINUOUS_NOT_FC_COUNT = 2 # A song will be skipped after failing to achieve a Full Combo this many times.
-MAX_SONG_ATTEMPTS = 3 # 每首歌在一次任务中最多尝试3次
+MAX_ATTEMPT_COUNT = 3 # 每首歌在一次任务中最多尝试3次
 PLAY_FAILED_TIMES = 0
 DIFFICULTY = "hard"
 HUMAN_DELAY_ENABLED = False
@@ -72,6 +72,7 @@ OFFSET = {"up": 0, "down": 0, "move": 0, "wait": 0.0, "interval": 0.0}
 NOT_FC_SONG_COUNT_DICT: dict[str, int] = {} # Global variable to track songs that were not Full Combo'd.
 LAST_PLAYED_SONG_ID: Optional[str] = None # <-- 新增：记录上一首歌曲ID的变量
 SONG_ATTEMPT_COUNT_DICT: dict[str, int] = {} # <-- 新增：记录总尝试次数
+IS_INITIALISED = False # <-- 新增：全局初始化状态标志
 
 # Playback monitor thread
 stop_event = threading.Event()
@@ -327,7 +328,7 @@ def play_song(stop_event, playback_started_event):
                     time.sleep(PHOTOGATE_LATENCY / 1000)
                     break
                 elif not freezed:
-                    logging.debug(f"Color change delta: {change_score}, waited_frames: {waited_frames}")
+                    logging.debug(f"Colour change delta: {change_score}, waited_frames: {waited_frames}")
                     if change_score < STABLE_THRESHOLD:
                         waited_frames += 1
                     else:
@@ -404,13 +405,13 @@ def init_maa():
     if not maacontroller.post_connection().wait().succeeded:
         raise RuntimeError(f"Failed to connect controller to device {device.name}.")
     maatasker.bind(maaresource, maacontroller)
-    if not maatasker.inited: raise RuntimeError("Failed to initialize MAA tasker module.")
-    logging.info("MAA initialized successfully.")
+    if not maatasker.inited: raise RuntimeError("Failed to initialise MAA tasker module.")
+    logging.info("MAA initialised successfully.")
 
 
 def init_player_and_mnt():
     global current_player, mnt
-    if not device: raise RuntimeError("MAA device not initialized before initialising player.")
+    if not device: raise RuntimeError("MAA device not initialised before initialising player.")
     extra_config = device.config["extras"]
     if "mumu" in extra_config:
         type_, config_key = "mumu", "mumu"
@@ -426,7 +427,7 @@ def init_player_and_mnt():
         mnt_asset_path=resource_path("assets/minitouch_EvATive7"), callback=mnt_callback,
         adb_executor=str(device.adb_path.absolute()),
     )
-    logging.info(f"{type_} player and Minitouch initialized successfully.")
+    logging.info(f"{type_} player and Minitouch initialised successfully.")
 
 
 # --- MAA Custom Modules ---
@@ -454,7 +455,7 @@ class UICheckFCStatusRecognition(CustomRecognition):
 
         # 2. 新增的总尝试次数检查
         attempt_count = SONG_ATTEMPT_COUNT_DICT.get(current_song_id, 0)
-        if attempt_count >= MAX_SONG_ATTEMPTS:
+        if attempt_count >= MAX_ATTEMPT_COUNT:
             logging.warning(
                 f"Song '{current_song_name}' has reached max attempt count ({attempt_count})."
             )
@@ -497,7 +498,7 @@ class UISongRecognitionMedley(CustomRecognition):
         best_match = max(results, key=lambda x: x[1])
         if best_match and best_match[1] > 50:
             song_name = "[FULL] " + best_match[0] if IS_FULL_SONG else best_match[0]
-            logging.info(f"Song recognized: '{song_name}' (Confidence: {best_match[1]}%)")
+            logging.info(f"Song recognised: '{song_name}' (Confidence: {best_match[1]}%)")
             return self.AnalyzeResult(roi, song_name)
         return self.AnalyzeResult(None, "")
 
@@ -530,9 +531,10 @@ class UISongRecognitionFreeSingle(CustomRecognition):
                 song_name = "[超高難易度 SPECIAL] " + best_match[0]
             else:
                 song_name = best_match[0]
-            logging.info(f"Song recognized: '{song_name}' (Confidence: {best_match[1]}%)")
+            logging.info(f"Song recognised: '{song_name}' (Confidence: {best_match[1]}%)")
             return self.AnalyzeResult(roi, song_name)
         return self.AnalyzeResult(None, "")
+
 
 @maaresource.custom_recognition("UISongRecognitionFreeAuto")
 class UISongRecognitionFreeAuto(CustomRecognition):
@@ -546,26 +548,57 @@ class UISongRecognitionFreeAuto(CustomRecognition):
                 if model: pipeline["_ocr_song"]["model"] = model
                 ocr_text = context.run_recognition("_ocr_song", argv.image, pipeline).best_result.text
                 logging.info(f"OCR ({model or 'default'}) raw text: '{ocr_text}'")
+
                 if "FULL" in ocr_text:
                     return None
+
                 match = fuzzy_match_song(ocr_text)
-                logging.info(f"Fuzzy match result ({model or 'default'}): {match}")
-                return match
+                if not match:
+                    return None
+
+                matched_name, raw_score = match[0], match[1]
+                logging.info(f"Fuzzy match result ({model or 'default'}): ('{matched_name}', {raw_score})")
+
+                # --- 新增：长度差异惩罚机制 ---
+                len_ocr = len(ocr_text)
+                len_matched = len(matched_name)
+
+                if len_ocr == 0 or len_matched == 0:
+                    length_ratio = 0
+                else:
+                    # 计算长度相似度，作为惩罚因子 (0.0 a 1.0)
+                    length_ratio = min(len_ocr, len_matched) / max(len_ocr, len_matched)
+
+                adjusted_score = raw_score * length_ratio
+                logging.info(
+                    f"Adjusted score for '{matched_name}' with length penalty ({model or 'default'}): "
+                    f"{adjusted_score:.2f} (raw: {raw_score}, len_ratio: {length_ratio:.2f})"
+                )
+                # --- 惩罚机制结束 ---
+
+                # 返回带有惩罚分数的匹配结果
+                return (matched_name, adjusted_score)
+
             except Exception as e:
                 logging.error(f"OCR ({model or 'default'}) execution failed: {e}")
                 return None
 
         jp_match = ocr_and_match("ppocr_v3/ja_jp")
         common_match = ocr_and_match()
-        if not jp_match or not common_match:
-            return self.AnalyzeResult(None, "")
-        results = [jp_match, common_match]
 
+        # 收集所有成功的匹配结果
+        results = [m for m in [jp_match, common_match] if m]
+
+        if not results:
+            return self.AnalyzeResult(None, "")
+
+        # 基于调整后的分数（adjusted_score）选择最佳匹配
         best_match = max(results, key=lambda x: x[1])
 
         if best_match and best_match[1] > 50:
             matched_song_name = best_match[0]
-            logging.info(f"Song recognized: '{matched_song_name}' (Confidence: {best_match[1]}%)")
+            adjusted_confidence = best_match[1]
+            logging.info(f"Song recognised: '{matched_song_name}' (Adjusted Confidence: {adjusted_confidence:.2f}%)")
             return self.AnalyzeResult(roi, matched_song_name)
 
         return self.AnalyzeResult(None, "")
@@ -788,11 +821,46 @@ def stop_streaming():
 
 # --- Task Entrypoints ---
 def init():
+    global IS_INITIALISED
+    if IS_INITIALISED:
+        logging.info("Components are already initialised. Skipping.")
+        return
     try:
         init_maa()
         init_player_and_mnt()
+        IS_INITIALISED = True
     except Exception as e:
+        IS_INITIALISED = False
+        logging.error("Initialisation failed.", exc_info=True)
         raise e
+    
+# 文件末尾的清理函数
+def shutdown_resources():
+    """关闭并释放所有全局资源，如 MNT 和 MAA 控制器。"""
+    global mnt, maacontroller, maatasker
+
+    if maatasker and maatasker.running:
+        logging.info("Final shutdown: Stopping MAA tasker.")
+        maatasker.post_stop()
+
+    if mnt:
+        logging.info("Disconnecting Minitouch...")
+        try:
+            mnt.disconnect()
+            mnt = None
+        except Exception as e:
+            logging.error(f"Error disconnecting Minitouch: {e}", exc_info=True)
+
+    if maacontroller:
+        logging.info("Disconnecting MAA AdbController...")
+        try:
+            if maacontroller.post_disconnect().wait().succeeded:
+                logging.info("AdbController disconnected successfully.")
+            else:
+                logging.warning("Failed to disconnect AdbController cleanly.")
+            maacontroller = None
+        except Exception as e:
+            logging.error(f"Error disconnecting AdbController: {e}", exc_info=True)
 
 
 def run_single_mode_free(config_data):
@@ -800,7 +868,7 @@ def run_single_mode_free(config_data):
     global DIFFICULTY, HUMAN_DELAY_ENABLED
     DIFFICULTY = config_data.get("difficulty", "expert")
     HUMAN_DELAY_ENABLED = config_data.get("human_delay", False)
-    if not maacontroller or not mnt: raise RuntimeError("MAA is not initialized.")
+    if not maacontroller or not mnt: raise RuntimeError("MAA is not initialised.")
     override_pipeline = {
         "ui_simplified_entry": {
             "recognition": "Custom",
@@ -843,15 +911,15 @@ def run_single_mode_free(config_data):
 
 def run_full_auto_mode(config_data):
     """Full auto mode with failure stop and non-FC skip functionality."""
-    global DIFFICULTY, HUMAN_DELAY_ENABLED, PLAY_FAILED_TIMES, NOT_FC_SONG_COUNT_DICT, MAX_CONTINUOUS_NOT_FC_COUNT, MAX_SONG_ATTEMPTS
+    global DIFFICULTY, HUMAN_DELAY_ENABLED, PLAY_FAILED_TIMES, NOT_FC_SONG_COUNT_DICT, MAX_CONTINUOUS_NOT_FC_COUNT, MAX_ATTEMPT_COUNT
 
     DIFFICULTY = config_data.get("difficulty", "hard")
     HUMAN_DELAY_ENABLED = config_data.get("human_delay", False)
 
     # Get the value from config_data and update the global variable
     # Use .get() with a default value of 1 for safety
-    MAX_CONTINUOUS_NOT_FC_COUNT = config_data.get("max_not_fc_count", 1)
-    MAX_SONG_ATTEMPTS = config_data.get("max_song_attempts", 3)
+    MAX_CONTINUOUS_NOT_FC_COUNT = config_data.get("max_continuous_not_fc_count", 1)
+    MAX_ATTEMPT_COUNT = config_data.get("max_attempt_count", 3)
 
     PLAY_FAILED_TIMES = 0
     NOT_FC_SONG_COUNT_DICT.clear()
@@ -859,7 +927,7 @@ def run_full_auto_mode(config_data):
     # Add a log to confirm the setting was received
     logging.info(f"Non-FC Skip Limit set to: {MAX_CONTINUOUS_NOT_FC_COUNT}")
 
-    if not maacontroller or not mnt: raise RuntimeError("MAA is not initialized.")
+    if not maacontroller or not mnt: raise RuntimeError("MAA is not initialised.")
 
     pipeline_def_path = resource_path("assets/resource/pipeline")
     with open(pipeline_def_path / "live.json", 'r', encoding='utf-8') as f:

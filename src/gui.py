@@ -554,7 +554,7 @@ class AutodoriGUI:
             "mode": self.mode_var.get(),
             "difficulty": self.difficulty_var.get(),
             "human_delay": self.human_var.get(),
-            "max_not_fc_count": self.max_continuous_not_fc_var.get(),
+            "max_continuous_not_fc_count": self.max_continuous_not_fc_var.get(),
             "max_attempt_count": self.max_attempt_var.get()
         }
         self.bot_thread = threading.Thread(target=self._run_bot_task, args=(config_data,), daemon=True)
@@ -613,6 +613,24 @@ class AutodoriGUI:
         else:
             # 未勾选时，设置为背景色（隐形）
             self.human_delay_warning_label.config(foreground=self.bg_color)
+
+    def on_app_exit(self):
+        """应用程序退出的主处理函数。"""
+        logging.info("Application exit requested. Cleaning up resources...")
+
+        # 步骤1：检查并停止正在运行的任务（强制执行一次停止任务函数）
+        if self.bot_thread and self.bot_thread.is_alive():
+            logging.info("Active task found. Calling stop_bot() before exiting.")
+            self.stop_bot()
+            self.bot_thread.join(timeout=5)  # 等待任务线程响应停止信号
+
+        # 步骤2：调用后端的最终资源清理函数
+        logging.info("Shutting down backend resources (Minitouch, ADB)...")
+        autodori_ui.shutdown_resources()
+
+        # 步骤3：所有清理完成后，销毁主窗口，正式退出
+        logging.info("Cleanup complete. Exiting GUI.")
+        self.master.destroy()
 
 
 # --- 程序入口 ---
