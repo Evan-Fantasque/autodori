@@ -321,7 +321,7 @@ class AutodoriGUI:
         ttk.Label(self.fc_options_frame, text="未FC跳过阈值：").pack(side=tk.LEFT, padx=(5, 0))
         ttk.Spinbox(self.fc_options_frame, from_=1, to=99, textvariable=self.max_continuous_not_fc_var, width=5).pack(side=tk.LEFT, padx=3)
         ttk.Label(self.fc_options_frame, text="最大尝试次数：").pack(side=tk.LEFT, padx=(5, 0))
-        ttk.Spinbox(self.fc_options_frame, from_=1, to=99, textvariable=self.max_attempt_var, width=5).pack(side=tk.LEFT, padx=3)
+        ttk.Spinbox(self.fc_options_frame, from_=2, to=99, textvariable=self.max_attempt_var, width=5).pack(side=tk.LEFT, padx=3)
 
         self.human_delay_frame = ttk.Frame(options_frame)
         self.human_delay_frame.pack(side=tk.LEFT, padx=5)
