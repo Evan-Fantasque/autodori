@@ -352,8 +352,8 @@ class Chart:
         if humanize:
             # =================== “分而治之”参数配置 ===================
             # 1. 定义不同打击倾向的“占比” (三者相加建议为 1.0)
-            EARLY_HIT_PROBABILITY = 0.025  # “抢拍”
-            LATE_HIT_PROBABILITY = 0.025  # “拖拍”
+            EARLY_HIT_PROBABILITY = 0.03  # “抢拍”
+            LATE_HIT_PROBABILITY = 0.03  # “拖拍”
 
             # 2. 定义不同倾向的“偏移范围” (毫秒), 基于 Perfect 区间 (-33ms, +50ms)
             EARLY_HIT_RANGE_MS = (-26, -22)  # 抢拍范围
@@ -380,13 +380,13 @@ class Chart:
 
                         if dice_roll < EARLY_HIT_PROBABILITY:
                             # 判定为“抢拍型”
-                            random_jitter = -30
+                            random_jitter = -20
                         elif dice_roll < EARLY_HIT_PROBABILITY + LATE_HIT_PROBABILITY:
                             # 判定为“拖拍型”
-                            random_jitter = 30
+                            random_jitter = 20
                         else:
                             # 判定为“标准型”
-                            random_jitter = random.randint(-5, 5)
+                            random_jitter = 0
 
                         new_down_time = action['time'] + random_jitter
                         action['time'] = new_down_time
@@ -395,7 +395,7 @@ class Chart:
                     elif action['type'] == 'up':
                         if note_index in note_down_times:
                             down_time = note_down_times[note_index]
-                            action['time'] = down_time + random.randint(15, 25)
+                            action['time'] = down_time
 
         # 随机化后需要重新排序 (此部分代码保持不变)
         actions.sort(key=lambda x: x["time"])

@@ -56,12 +56,12 @@ DEFAULT_MOVE_SLICE_SIZE = 10
 CMD_SLICE_SIZE = 100
 MAX_CONTINUOUS_FAILED_TIMES = 10
 STABLE_THRESHOLD = 3
-CONSECUTIVE_FRAMES_NEEDED = 150
+CONSECUTIVE_FRAMES_NEEDED = 120
 FREEZE_SLEEP_TIME = 0.005
-CONFIDENCE_THRESHOLD_FAILURE = 0.9
+CONFIDENCE_THRESHOLD_FAILURE = 0.8
 CONFIDENCE_THRESHOLD_PLAY = 0.9
-MAX_CONTINUOUS_NOT_FC_COUNT = 2 # A song will be skipped after failing to achieve a Full Combo this many times.
-MAX_ATTEMPT_COUNT = 3 # 每首歌在一次任务中最多尝试3次
+MAX_CONTINUOUS_NOT_FC_COUNT = 1  # A song will be skipped after failing to achieve a Full Combo this many times.
+MAX_ATTEMPT_COUNT = 1  # 每首歌在一次任务中最多尝试3次
 PLAY_FAILED_TIMES = 0
 DIFFICULTY = "hard"
 HUMAN_DELAY_ENABLED = False
@@ -69,10 +69,10 @@ IS_FULL_SONG = False
 IS_HIGH_DIFFICULTY = False
 SUPPORTED_DIFFICULTIES = ['easy', 'normal', 'hard', 'expert', 'special']
 OFFSET = {"up": 0, "down": 0, "move": 0, "wait": 0.0, "interval": 0.0}
-NOT_FC_SONG_COUNT_DICT: dict[str, int] = {} # Global variable to track songs that were not Full Combo'd.
-LAST_PLAYED_SONG_ID: Optional[str] = None # <-- 新增：记录上一首歌曲ID的变量
-SONG_ATTEMPT_COUNT_DICT: dict[str, int] = {} # <-- 新增：记录总尝试次数
-IS_INITIALISED = False # <-- 新增：全局初始化状态标志
+NOT_FC_SONG_COUNT_DICT: dict[str, int] = {}  # Global variable to track songs that were not Full Combo'd.
+LAST_PLAYED_SONG_ID: Optional[str] = None  # <-- 新增：记录上一首歌曲ID的变量
+SONG_ATTEMPT_COUNT_DICT: dict[str, int] = {}  # <-- 新增：记录总尝试次数
+IS_INITIALISED = False  # <-- 新增：全局初始化状态标志
 
 # Playback monitor thread
 stop_event = threading.Event()
@@ -116,6 +116,7 @@ streaming_active = threading.Event()
 STREAM_SETTINGS = {"fps": 1, "resolution": 480}
 stream_settings_lock = threading.Lock()
 """
+
 
 def reset_callback_data():
     global callback_data
@@ -169,6 +170,7 @@ def save_song(name):
     )
     logging.info(f"Saved song: {name}")
 
+
 def get_scaled_template(template_path):
     template = cv2.imread(template_path, 0)
     runtime_h, runtime_w, _ = current_player.ipc_capture_display().shape
@@ -182,6 +184,7 @@ def get_scaled_template(template_path):
         return template
     resized_template = cv2.resize(template, (new_w, new_h), interpolation=cv2.INTER_AREA)
     return resized_template
+
 
 def monitor_failure_thread(stop_event, playback_started_event):
     """
@@ -239,12 +242,14 @@ def monitor_failure_thread(stop_event, playback_started_event):
     finally:
         logging.info("Monitor thread terminated.")
 
+
 def play_song(stop_event, playback_started_event):
     """
     Core playback function with performance optimisations.
     """
     cmd_log_list.clear()
     reset_callback_data()
+
     def check_exit_status():
         if stop_event.is_set():
             logging.warning("Playback failed, exiting.")
@@ -264,9 +269,10 @@ def play_song(stop_event, playback_started_event):
         return
     pause_button_found = False
     wait_start_time = time.time()
+    playback_started_event.set()
     while not pause_button_found:
-        wait_timeout=30
-        wait_current_time=time.time()
+        wait_timeout = 30
+        wait_current_time = time.time()
         if wait_current_time - wait_start_time > wait_timeout:
             logging.error(f"Waiting for pause button timeout ({wait_current_time - wait_start_time}s), aborting.")
             return
@@ -274,7 +280,7 @@ def play_song(stop_event, playback_started_event):
             return
         screen = current_player.ipc_capture_display()
         height, width, _ = screen.shape
-        roi_screen = screen[0:int(height * 0.15), width-int(height * 0.15):width]
+        roi_screen = screen[0:int(height * 0.15), width - int(height * 0.15):width]
         gray_roi = cv2.cvtColor(roi_screen, cv2.COLOR_BGR2GRAY)
         result = cv2.matchTemplate(gray_roi, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, _ = cv2.minMaxLoc(result)
@@ -309,10 +315,10 @@ def play_song(stop_event, playback_started_event):
     last_color, waited_frames, freezed = None, 0, False
     info = get_runtime_info(current_player.resolution)["wait_first"]
     from_row, to_row = info["from"], info["to"]
-    playback_start_time=time.time()
+    playback_start_time = time.time()
     while True:
-        playback_timeout=500
-        playback_current_time=time.time()
+        playback_timeout = 500
+        playback_current_time = time.time()
         if playback_current_time - playback_start_time > playback_timeout:
             logging.error(f"Playback timeout ({playback_current_time - playback_start_time}s), aborting.")
             return
@@ -343,7 +349,6 @@ def play_song(stop_event, playback_started_event):
             return
 
     # STAGE 4: Command execution loop
-    playback_started_event.set()
     logging.info("Starting command execution.")
     while True:
         if check_exit_status():
@@ -360,6 +365,7 @@ def play_song(stop_event, playback_started_event):
         else:
             break
     logging.info("Playback finished.")
+
 
 def mnt_callback(event: MNTEvent, data: MNTEventData):
     global callback_data
@@ -502,6 +508,7 @@ class UISongRecognitionMedley(CustomRecognition):
             return self.AnalyzeResult(roi, song_name)
         return self.AnalyzeResult(None, "")
 
+
 @maaresource.custom_recognition("UISongRecognitionFreeSingle")
 class UISongRecognitionFreeSingle(CustomRecognition):
     def analyze(self, context: Context, argv: CustomRecognition.AnalyzeArg):
@@ -549,8 +556,8 @@ class UISongRecognitionFreeAuto(CustomRecognition):
                 ocr_text = context.run_recognition("_ocr_song", argv.image, pipeline).best_result.text
                 logging.info(f"OCR ({model or 'default'}) raw text: '{ocr_text}'")
 
-                if "FULL" in ocr_text:
-                    return None
+                if "full" in ocr_text.lower():
+                    return 100
 
                 match = fuzzy_match_song(ocr_text)
                 if not match:
@@ -559,14 +566,12 @@ class UISongRecognitionFreeAuto(CustomRecognition):
                 matched_name, raw_score = match[0], match[1]
                 logging.info(f"Fuzzy match result ({model or 'default'}): ('{matched_name}', {raw_score})")
 
-                # --- 新增：长度差异惩罚机制 ---
                 len_ocr = len(ocr_text)
                 len_matched = len(matched_name)
 
                 if len_ocr == 0 or len_matched == 0:
                     length_ratio = 0
                 else:
-                    # 计算长度相似度，作为惩罚因子 (0.0 a 1.0)
                     length_ratio = min(len_ocr, len_matched) / max(len_ocr, len_matched)
 
                 adjusted_score = raw_score * length_ratio
@@ -574,9 +579,6 @@ class UISongRecognitionFreeAuto(CustomRecognition):
                     f"Adjusted score for '{matched_name}' with length penalty ({model or 'default'}): "
                     f"{adjusted_score:.2f} (raw: {raw_score}, len_ratio: {length_ratio:.2f})"
                 )
-                # --- 惩罚机制结束 ---
-
-                # 返回带有惩罚分数的匹配结果
                 return (matched_name, adjusted_score)
 
             except Exception as e:
@@ -585,19 +587,39 @@ class UISongRecognitionFreeAuto(CustomRecognition):
 
         jp_match = ocr_and_match("ppocr_v3/ja_jp")
         common_match = ocr_and_match()
-
-        # 收集所有成功的匹配结果
         results = [m for m in [jp_match, common_match] if m]
 
-        if not results:
+        if not results or 100 in results:
             return self.AnalyzeResult(None, "")
 
-        # 基于调整后的分数（adjusted_score）选择最佳匹配
         best_match = max(results, key=lambda x: x[1])
 
         if best_match and best_match[1] > 50:
             matched_song_name = best_match[0]
             adjusted_confidence = best_match[1]
+
+            # --- 新增：整合的歌曲可用性检查逻辑 ---
+            song_id = all_song_name_indexes.get(matched_song_name)
+            if song_id:
+                # 检查总尝试次数
+                attempt_count = SONG_ATTEMPT_COUNT_DICT.get(song_id, 0)
+                if attempt_count >= MAX_ATTEMPT_COUNT:
+                    logging.warning(
+                        f"Song '{current_song_name}' has reached max attempt count ({attempt_count})."
+                    )
+                    return self.AnalyzeResult(None, "")  # 返回失败，触发跳过
+
+                # 检查连续未FC次数
+                not_fc_count = NOT_FC_SONG_COUNT_DICT.get(song_id, 0)
+                if not_fc_count >= MAX_CONTINUOUS_NOT_FC_COUNT:
+                    logging.warning(
+                        f"Song '{current_song_name}' has reached the non-FC limit ({not_fc_count})."
+                    )
+                    NOT_FC_SONG_COUNT_DICT[song_id] = 0  # 重置计数器
+                    return self.AnalyzeResult(None, "")  # 返回失败，触发跳过
+            # --- 检查逻辑结束 ---
+
+            # 如果所有检查都通过，则认为歌曲识别成功且可用
             logging.info(f"Song recognised: '{matched_song_name}' (Adjusted Confidence: {adjusted_confidence:.2f}%)")
             return self.AnalyzeResult(roi, matched_song_name)
 
@@ -624,7 +646,7 @@ class UIPlay(CustomAction):
         )
         try:
             monitor.start()
-            play_song(stop_event,playback_started_event)
+            play_song(stop_event, playback_started_event)
             stop_event.set()
             return self.RunResult(True)
         except Exception as e:
@@ -659,6 +681,30 @@ class UIPlayResult(CustomRecognition):
         logging.info(f"Play result: {result}")
         return self.AnalyzeResult([0, 0, 0, 0], json.dumps(result))
 
+@maaresource.custom_recognition("UIRecognizeLevelUp")
+class UIRecognizeLevelUp(CustomRecognition):
+    def analyze(self, context: Context, argv: CustomRecognition.AnalyzeArg):
+        """Recognizes the 'LevelUP!' text in a specific ROI with high confidence."""
+        roi = [590, 640, 100, 30]
+        target_text = "LevelUP!"
+        confidence_threshold = 85  # 设置置信度阈值
+
+        try:
+            pipeline = {"_ocr_levelup": {"recognition": "OCR", "roi": roi, "only_rec": True}}
+            ocr_text = context.run_recognition("_ocr_levelup", argv.image, pipeline).best_result.text
+
+            # 使用模糊匹配来检查置信度
+            match = fzwzprocess.extractOne(ocr_text, [target_text])
+
+            if match and match[1] >= confidence_threshold:
+                # match 是一个元组，例如 ('LevelUP!', 95)
+                return self.AnalyzeResult(roi, target_text)  # 返回成功
+            else:
+                score = match[1] if match else 0
+                return self.AnalyzeResult(None, "")  # 返回失败
+
+        except Exception as e:
+            return self.AnalyzeResult(None, "")
 
 @maaresource.custom_action("UISavePlayResult")
 class UISavePlayResult(CustomAction):
@@ -737,7 +783,7 @@ class UISavePlayResult(CustomAction):
                     # 日志现在只在确定为“非FC”时才打印原因
                     logging.warning(
                         f"Song '{current_song_name}' did not achieve a Full Combo. "
-                        f"Total count: {NOT_FC_SONG_COUNT_DICT[current_song_id]}"
+                        f"Total count: {NOT_FC_SONG_COUNT_DICT[current_song_id]} "
                         f"Reasons: {', '.join(reasons)}"
                     )
 
@@ -765,7 +811,8 @@ class UISavePlayResult(CustomAction):
         if current_song_id:
             current_attempts = SONG_ATTEMPT_COUNT_DICT.get(current_song_id, 0)
             SONG_ATTEMPT_COUNT_DICT[current_song_id] = current_attempts + 1
-            logging.info(f"Song '{current_song_name}' has been attempted {SONG_ATTEMPT_COUNT_DICT[current_song_id]} times.")
+            logging.info(
+                f"Song '{current_song_name}' has been attempted {SONG_ATTEMPT_COUNT_DICT[current_song_id]} times.")
 
         # --- 在函数末尾记录上一首歌曲 ---
         LAST_PLAYED_SONG_ID = current_song_id
@@ -775,6 +822,7 @@ class UISavePlayResult(CustomAction):
             context.run_action("stop")
 
         return self.RunResult(True)
+
 
 """
 # --- Screen Streaming ---
@@ -819,6 +867,7 @@ def stop_streaming():
     streaming_thread = None
 """
 
+
 # --- Task Entrypoints ---
 def init():
     global IS_INITIALISED
@@ -833,7 +882,8 @@ def init():
         IS_INITIALISED = False
         logging.error("Initialisation failed.", exc_info=True)
         raise e
-    
+
+
 # 文件末尾的清理函数
 def shutdown_resources():
     """关闭并释放所有全局资源，如 MNT 和 MAA 控制器。"""
@@ -956,9 +1006,9 @@ def run_full_auto_mode(config_data):
                 "random_choice_song_action"
             ],
             "interrupt": [
-                "liveagain",
-                "live_home_button"
-            ] + result_screen_interrupts,
+                             "liveagain",
+                             "live_home_button",
+                         ] + result_screen_interrupts,
             "post_delay": 2000
         },
         "get_song_name": {
@@ -967,19 +1017,15 @@ def run_full_auto_mode(config_data):
             "action": "Custom",
             "custom_action": "UISaveSong",
             "next": [
-                "decide_play_or_skip",
                 "click_confirm_on_song_select"
             ],
             "timeout": 15000,
         },
-        # Decision node
-        "decide_play_or_skip": {
-            "recognition": "Custom",
-            "custom_recognition": "UICheckFCStatusRecognition",
-            "next": "random_choice_song_action",
-        },
         "random_choice_song_action": {
-            **live_pipeline_def["random_choice_song"],
+            "recognition": "TemplateMatch",
+            "template": "live/button/random_choice_song.png",
+            "action": "Click",
+            "post_delay": 2000,
             "next": [
                 "select_song"
             ]
@@ -988,6 +1034,9 @@ def run_full_auto_mode(config_data):
             **common_pipeline_def["confirm_button"],
             "next": [
                 "wait_for_final_confirmation"
+            ],
+            "interrupt": [
+                "click_confirm_on_song_select"
             ]
         },
         "wait_for_final_confirmation": {
@@ -1053,20 +1102,20 @@ def run_full_auto_mode(config_data):
             ]
         },
         "select_live_mode": {
-                "recognition": "OCR",
-                "expected": "自由演出",
-                "roi": [679, 183, 257, 354],
-                "action": "Click",
-                "post_delay": 1500,
-                "next": [
-                    "select_song",
-                    "select_live_mode",
-                    "live_home_button"
-                ],
-                "interrupt": [
-                    "login_expired",
-                    "connect_failed"
-                ],
+            "recognition": "OCR",
+            "expected": "自由演出",
+            "roi": [679, 183, 257, 354],
+            "action": "Click",
+            "post_delay": 1500,
+            "next": [
+                "select_song",
+                "select_live_mode",
+                "live_home_button"
+            ],
+            "interrupt": [
+                "login_expired",
+                "connect_failed"
+            ],
         },
         # --- Optimised Results Screen Flow ---
         "wait_for_result_screen": {
@@ -1116,6 +1165,10 @@ def run_full_auto_mode(config_data):
             "pre_wait_freezes": {"threshold": 0.65, "time": 5000},
             "action": "Click",
             "next": "select_song",
+            "interrupt": [
+                             "liveagain",
+                             "live_home_button",
+                         ] + result_screen_interrupts,
             "post_delay": 2000
         },
     }
@@ -1125,3 +1178,106 @@ def run_full_auto_mode(config_data):
     logging.info("Submitting Full Auto Mode auto-play task.")
     maatasker.post_task("select_song", override_pipeline).wait()
     logging.info("Full Auto Mode auto-play task finished or stopped.")
+
+
+def run_story_mode():
+    override_pipeline = {
+        "read_story": {
+            "recognition": "OCR",
+            "expected": "阅读",
+            "action": "Click",
+            "post_delay": 1500,
+            "next": [
+                "no_voice_button"
+            ],
+            "interrupt": [
+                "confirm_button",
+                "read_story"
+            ],
+            "roi": [
+                1030,
+                630,
+                100,
+                40
+            ]
+        },
+        "no_voice_button": {
+            "recognition": "OCR",
+            "expected": "无语音",
+            "action": "Click",
+            "next": [
+                "reader_menu"
+            ],
+            "interrupt": [
+                "read_story",
+                "no_voice_button"
+            ],
+            "roi": [
+                590,
+                560,
+                100,
+                40
+            ]
+        },
+        "reader_menu": {
+            "recognition": "TemplateMatch",
+            "template": "common/reader/menu.png",
+            "action": "Click",
+            "next": "reader_skip",
+            "interrupt": [
+                "no_voice_button",
+                "reader_menu"
+            ],
+        },
+        "reader_skip": {
+            "recognition": "TemplateMatch",
+            "template": "common/reader/skip.png",
+            "action": "Click",
+            "next": "skip_button",
+            "post_delay": 1500,
+            "interrupt": [
+                "reader_menu",
+                "reader_skip"
+            ],
+        },
+        "skip_button": {
+            "recognition": "TemplateMatch",
+            "template": "common/button/skip/pink.png",
+            "action": "Click",
+            "next": "confirm_button",
+            "interrupt": [
+                "reader_skip",
+                "skip_button"
+            ],
+        },
+        "confirm_button": {
+            "recognition": "OCR",
+            "expected": "确定",
+            "action": "Click",
+            "post_delay": 1500,
+            "next": [
+                "read_story"
+            ],
+            "interrupt": [
+                "skip_button",
+                "confirm_button"
+            ],
+            "roi": [
+                600,
+                530,
+                100,
+                40
+            ]
+        }
+    }
+    logging.info("Submitting Story Mode task.")
+    maatasker.post_task("read_story", override_pipeline).wait()
+    logging.info("Story Mode task finished or stopped.")
+
+def run_rouge_mode():
+    pipeline_def_path = resource_path("assets/resource/pipeline")
+    with open(pipeline_def_path / "rouge.json", 'r', encoding='utf-8') as f:
+        rouge_pipeline_def = json.load(f)
+    logging.info("Submitting Rouge Mode task.")
+    maatasker.post_task("start_from_main_menu", rouge_pipeline_def).wait()
+    logging.info("Rouge Mode task finished or stopped.")

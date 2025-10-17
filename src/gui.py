@@ -17,25 +17,28 @@ import autodori_ui
 
 # --- 关键部分：设置日志重定向 ---
 class QueueHandler(logging.Handler):
-    """自定义日志处理器，将日志消息放入一个线程安全的队列中。"""
-
     def __init__(self, log_queue):
         super().__init__()
         self.log_queue = log_queue
-
     def emit(self, record):
         msg = record.getMessage()
         if msg.startswith("send operation:"):
-            return  # 如果是，则直接返回，不将此日志放入GUI队列，从而实现拦截
+            return
         self.log_queue.put(self.format(record))
 
+class FilteringFileHandler(logging.FileHandler):
+    def emit(self, record):
+        msg = record.getMessage()
+        if msg.startswith("send operation:"):
+            return
+        super().emit(record)
 
 # 2. GUI应用主类
 class AutodoriGUI:
     def __init__(self, master):
         self.master = master
         master.title("autodori UI")
-        master.geometry("650x550")
+        master.geometry("700x550")
 
         self.bot_thread = None
         self.is_float_mode = False
@@ -65,7 +68,7 @@ class AutodoriGUI:
         log_filepath = os.path.join(debug_folder, log_filename)
 
         # 创建文件处理器，指定路径和编码
-        file_handler = logging.FileHandler(log_filepath, encoding='utf-8')
+        file_handler = FilteringFileHandler(log_filepath, encoding='utf-8')
 
         # --- 配置根记录器 (Logger) ---
         # 获取根记录器
@@ -95,7 +98,7 @@ class AutodoriGUI:
     def _create_disclaimer_view(self):
         """创建并显示欢迎/风险提示界面。"""
         # 设置主窗口的最小尺寸，防止用户缩得过小
-        self.master.minsize(650, 550)
+        self.master.minsize(700, 550)
 
         self.disclaimer_frame = ttk.Frame(self.master, padding="15")
         self.disclaimer_frame.pack(fill=tk.BOTH, expand=True)
@@ -115,7 +118,7 @@ class AutodoriGUI:
         usage_frame = ttk.LabelFrame(self.disclaimer_frame, text="使用方法", padding="10")
         usage_frame.pack(fill=tk.X, pady=10)
         usage_text = (
-            "模拟器分辨率请设置为16：9比例。\n"
+            "模拟器分辨率请设置为1280x720。\n"
             "歌曲难度请手动设置为与游戏中一致。\n"
             "单曲模式：启动任务前，请手动进入自由、挑战模式下的「选择乐队」界面。\n"
             "全自动模式：启动任务前，请手动进入自由模式下的「选择乐曲」界面。"
@@ -300,9 +303,10 @@ class AutodoriGUI:
         mode_frame = ttk.Frame(config_frame)
         mode_frame.pack(fill=tk.X, padx=2, pady=2)
         ttk.Label(mode_frame, text="模式:").pack(side=tk.LEFT)
-        # --- 修改：为Radiobutton添加command回调 ---
         ttk.Radiobutton(mode_frame, text="单曲模式", variable=self.mode_var, value='single', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
         ttk.Radiobutton(mode_frame, text="全自动模式", variable=self.mode_var, value='full_auto', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="story", variable=self.mode_var, value='story', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="rouge", variable=self.mode_var, value='rouge', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
 
         warnings_frame = ttk.Frame(mode_frame)
         warnings_frame.pack(side=tk.RIGHT, padx=(10, 0))
@@ -321,7 +325,7 @@ class AutodoriGUI:
         ttk.Label(self.fc_options_frame, text="未FC跳过阈值：").pack(side=tk.LEFT, padx=(5, 0))
         ttk.Spinbox(self.fc_options_frame, from_=1, to=99, textvariable=self.max_continuous_not_fc_var, width=5).pack(side=tk.LEFT, padx=3)
         ttk.Label(self.fc_options_frame, text="最大尝试次数：").pack(side=tk.LEFT, padx=(5, 0))
-        ttk.Spinbox(self.fc_options_frame, from_=2, to=99, textvariable=self.max_attempt_var, width=5).pack(side=tk.LEFT, padx=3)
+        ttk.Spinbox(self.fc_options_frame, from_=1, to=99, textvariable=self.max_attempt_var, width=5).pack(side=tk.LEFT, padx=3)
 
         self.human_delay_frame = ttk.Frame(options_frame)
         self.human_delay_frame.pack(side=tk.LEFT, padx=5)
@@ -364,7 +368,7 @@ class AutodoriGUI:
         if mode == 'full_auto':
             # 在全自动模式下：显示FC相关设置
             self.fc_options_frame.pack(side=tk.LEFT, after=self.difficulty_combobox)
-        elif mode == 'single':
+        else:
             # 在单曲模式下：隐藏FC相关设置
             self.fc_options_frame.pack_forget()
 
@@ -584,8 +588,12 @@ class AutodoriGUI:
                 autodori_ui.run_full_auto_mode(config_data)
             elif mode == 'single':
                 autodori_ui.run_single_mode_free(config_data)
+            elif mode == 'story':
+                autodori_ui.run_story_mode()
             elif mode == 'medley':
                 autodori_ui.run_single_mode_free(config_data)
+            elif mode == 'rouge':
+                autodori_ui.run_rouge_mode()
 
             logging.info("Task completed.")
         except Exception as e:
