@@ -5,14 +5,15 @@ import subprocess
 import sys
 import threading
 import time
+import yaml
+import shutil
 import tkinter as tk
 from functools import partial
 from tkinter import messagebox
 from tkinter import scrolledtext
 from tkinter import ttk
 
-# 导入您的后端脚本作为一个模块
-import autodori_ui
+import autodori
 
 
 # --- 关键部分：设置日志重定向 ---
@@ -46,13 +47,38 @@ class AutodoriGUI:
 
         # --- 为UI控件创建Tkinter变量 ---
         self.mode_var = tk.StringVar(value='full_auto')
-        self.difficulty_var = tk.StringVar(value=autodori_ui.DIFFICULTY)
-        self.human_var = tk.BooleanVar(value=autodori_ui.HUMAN_DELAY_ENABLED)
-        self.max_continuous_not_fc_var = tk.IntVar(value=autodori_ui.MAX_CONTINUOUS_NOT_FC_COUNT)
-        self.max_attempt_var = tk.IntVar(value=autodori_ui.MAX_ATTEMPT_COUNT)
+        self.difficulty_var = tk.StringVar(value=autodori.DIFFICULTY)
+        self.human_var = tk.BooleanVar(value=autodori.HUMAN_DELAY_ENABLED)
+        self.max_continuous_not_fc_var = tk.IntVar(value=autodori.MAX_CONTINUOUS_NOT_FC_COUNT)
+        self.max_attempt_var = tk.IntVar(value=autodori.MAX_ATTEMPT_COUNT)
+        self.disclaimer_agreed_var = tk.BooleanVar(value=False)
+
+        self.config_path = autodori.config_path  # 直接使用后端的 Path 对象
+        self.editable_globals = {
+            'PHOTOGATE_LATENCY': int,
+            'MIN_LIVEBOOST': int,
+            'DEFAULT_MOVE_SLICE_SIZE': int,
+            'CMD_SLICE_SIZE': int,
+            'MAX_CONTINUOUS_FAILED_TIMES': int,
+            'STABLE_THRESHOLD': int,
+            'CONSECUTIVE_FRAMES_NEEDED': int,
+            'FREEZE_SLEEP_TIME': float,
+            'CONFIDENCE_THRESHOLD_FAILURE': float,
+            'CONFIDENCE_THRESHOLD_PLAY': float,
+            'IS_FULL_SONG': bool,
+            'IS_HIGH_DIFFICULTY': bool
+        }
+        self.load_settings()  # 初始化变量后加载配置
 
         # --- 绑定状态追踪 ---
         self.human_var.trace_add('write', self._update_warnings)
+
+        # 新增：为所有控制面板上的变量绑定实时保存
+        self.mode_var.trace_add('write', self._auto_save_callback)
+        self.difficulty_var.trace_add('write', self._auto_save_callback)
+        self.human_var.trace_add('write', self._auto_save_callback)
+        self.max_continuous_not_fc_var.trace_add('write', self._auto_save_callback)
+        self.max_attempt_var.trace_add('write', self._auto_save_callback)
 
         # --- 设置日志队列 (用于GUI显示) ---
         self.log_queue = queue.Queue()
@@ -60,7 +86,7 @@ class AutodoriGUI:
         # 注意：这里我们不再对 queue_handler 设置格式，让根记录器统一处理
 
         # --- 新增：设置文件日志 (用于输出到文件) ---
-        debug_folder = "debug"
+        debug_folder = autodori.resource_path("debug")
         os.makedirs(debug_folder, exist_ok=True)  # 创建debug文件夹
 
         # 创建带时间戳的日志文件名
@@ -89,11 +115,15 @@ class AutodoriGUI:
         # --- 启动日志处理循环 ---
         self.master.after(100, self._process_log_queue)
 
-        # --- 修改：不再立即创建控件，而是先显示欢迎界面 ---
-        self._create_disclaimer_view()
-
         # --- 新增：用于存储全局变量UI控件的变量 ---
         self.global_vars_entries = {}
+
+        if self.disclaimer_agreed_var.get():
+            # 如果配置中记录已经同意过，直接创建主界面
+            self._create_main_widgets()
+        else:
+            # 否则，按原计划显示免责声明界面
+            self._create_disclaimer_view()
 
     def _create_disclaimer_view(self):
         """创建并显示欢迎/风险提示界面。"""
@@ -170,6 +200,11 @@ class AutodoriGUI:
             self.proceed_button.config(state=tk.DISABLED)
 
     def _show_main_app(self):
+        self.disclaimer_agreed_var.set(True)
+        # 如果你之前实现了 _auto_save_callback，由于 disclaimer_agreed_var 没有绑定 trace，
+        # 所以我们需要在这里手动调用一次 save_settings()
+        if hasattr(self, 'config_path'):
+            self.save_settings()
         """销毁欢迎界面并构建主应用程序界面。"""
         self.disclaimer_frame.destroy()
         self._create_main_widgets()
@@ -303,10 +338,11 @@ class AutodoriGUI:
         mode_frame = ttk.Frame(config_frame)
         mode_frame.pack(fill=tk.X, padx=2, pady=2)
         ttk.Label(mode_frame, text="模式:").pack(side=tk.LEFT)
-        ttk.Radiobutton(mode_frame, text="单曲模式", variable=self.mode_var, value='single', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(mode_frame, text="全自动模式", variable=self.mode_var, value='full_auto', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(mode_frame, text="story", variable=self.mode_var, value='story', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(mode_frame, text="rouge", variable=self.mode_var, value='rouge', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="自由演出——单曲模式", variable=self.mode_var, value='single', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="自由演出——全自动模式", variable=self.mode_var, value='full_auto', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="组曲——单曲模式", variable=self.mode_var, value='medley', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
+        #ttk.Radiobutton(mode_frame, text="story", variable=self.mode_var, value='story', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
+        #ttk.Radiobutton(mode_frame, text="rouge", variable=self.mode_var, value='rouge', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
 
         warnings_frame = ttk.Frame(mode_frame)
         warnings_frame.pack(side=tk.RIGHT, padx=(10, 0))
@@ -424,7 +460,7 @@ class AutodoriGUI:
                 self.global_vars_entries[var_name] = {}
 
                 # 获取字典的当前值
-                current_dict = getattr(autodori_ui, var_name)
+                current_dict = getattr(autodori, var_name)
 
                 col_count = 0
                 for key, value in current_dict.items():
@@ -438,13 +474,13 @@ class AutodoriGUI:
 
             elif var_type == bool:
                 # 使用 tk.BooleanVar 来存储复选框的状态 (True/False)
-                bool_var = tk.BooleanVar(value=getattr(autodori_ui, var_name))
+                bool_var = tk.BooleanVar(value=getattr(autodori, var_name))
                 checkbutton = ttk.Checkbutton(parent_frame, variable=bool_var)
                 checkbutton.grid(row=current_row, column=1, sticky='w', padx=5, pady=2)  # 使用 sticky='w' 左对齐
                 self.global_vars_entries[var_name] = bool_var
 
             else:  # int or float
-                entry_var = tk.StringVar(value=str(getattr(autodori_ui, var_name)))
+                entry_var = tk.StringVar(value=str(getattr(autodori, var_name)))
                 entry = ttk.Entry(parent_frame, textvariable=entry_var)
                 entry.grid(row=current_row, column=1, sticky='ew', padx=5, pady=2)
                 self.global_vars_entries[var_name] = entry_var
@@ -470,7 +506,7 @@ class AutodoriGUI:
                 var_type = self.editable_globals[var_name]
 
                 if var_type == dict:
-                    current_dict = getattr(autodori_ui, var_name)
+                    current_dict = getattr(autodori, var_name)
                     for key, entry_var in controls.items():
                         new_val_str = entry_var.get()
                         # 尝试转换为 float，如果失败再转为 int
@@ -481,18 +517,84 @@ class AutodoriGUI:
                 else:  # int or float
                     new_val_str = controls.get()
                     if var_type == int:
-                        setattr(autodori_ui, var_name, int(new_val_str))
+                        setattr(autodori, var_name, int(new_val_str))
                     elif var_type == float:
-                        setattr(autodori_ui, var_name, float(new_val_str))
+                        setattr(autodori, var_name, float(new_val_str))
                     elif var_type == bool:
-                        setattr(autodori_ui, var_name, new_val_str)
+                        setattr(autodori, var_name, new_val_str)
 
-            messagebox.showinfo("成功", "全局变量已成功更新！")
+            self.save_settings()  # <--- 新增：点击“应用修改”后同步保存到本地文件
+            messagebox.showinfo("成功", "全局变量已成功更新并保存！")
 
         except ValueError as e:
             messagebox.showerror("输入错误", f"修改失败，请输入有效的数值。\n错误: {e}")
         except Exception as e:
             messagebox.showerror("未知错误", f"应用设置时发生错误: {e}")
+
+    def load_settings(self):
+        """从 yaml 文件加载用户配置和全局变量"""
+        if self.config_path.exists():
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    config = yaml.safe_load(f) or {}
+
+                # 覆盖控制面板的 Tkinter 变量
+                if "mode" in config: self.mode_var.set(config["mode"])
+                if "difficulty" in config: self.difficulty_var.set(config["difficulty"])
+                if "human_delay" in config: self.human_var.set(config["human_delay"])
+                if "max_continuous_not_fc_count" in config: self.max_continuous_not_fc_var.set(
+                    config["max_continuous_not_fc_count"])
+                if "max_attempt_count" in config: self.max_attempt_var.set(config["max_attempt_count"])
+                if "disclaimer_agreed" in config: self.disclaimer_agreed_var.set(config["disclaimer_agreed"])
+                # 覆盖后端的全局变量
+                if "globals" in config:
+                    for k, v in config["globals"].items():
+                        if hasattr(autodori, k):
+                            setattr(autodori, k, v)
+            except Exception as e:
+                logging.error(f"加载配置文件失败: {e}")
+
+    def save_settings(self):
+        """将当前UI的设置和后端的全局变量保存到 yaml 文件"""
+        # 先尝试读取现有配置，避免覆盖文件中的其他非 GUI 内容
+        try:
+            if self.config_path.exists():
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    config = yaml.safe_load(f) or {}
+            else:
+                config = {}
+        except Exception:
+            config = {}
+
+        # 准备全局变量数据
+        globals_to_save = {}
+        for var_name in self.editable_globals.keys():
+            globals_to_save[var_name] = getattr(autodori, var_name)
+
+        # 更新配置字典
+        config.update({
+            "mode": self.mode_var.get(),
+            "difficulty": self.difficulty_var.get(),
+            "human_delay": self.human_var.get(),
+            "max_continuous_not_fc_count": self.max_continuous_not_fc_var.get(),
+            "max_attempt_count": self.max_attempt_var.get(),
+            "disclaimer_agreed": self.disclaimer_agreed_var.get(),  # 新增：保存免责声明状态
+            "globals": globals_to_save
+        })
+
+        # 写入 YAML 文件
+        try:
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                # allow_unicode=True 确保中文正常显示，不被转码为 Unicode 字符串
+                yaml.dump(config, f, allow_unicode=True, sort_keys=False, indent=4)
+        except Exception as e:
+            logging.error(f"保存配置文件失败: {e}")
+
+    def _auto_save_callback(self, *args):
+        """当控制面板上的 Tkinter 变量发生变化时，实时触发保存"""
+        # 确保配置路径已初始化，防止在加载阶段意外报错
+        if hasattr(self, 'config_path'):
+            self.save_settings()
 
     def _process_log_queue(self):
         try:
@@ -548,6 +650,7 @@ class AutodoriGUI:
         self.master.after(100, self._process_log_queue)
 
     def start_bot(self):
+        self.save_settings()
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
         self._update_float_button_state() # <<<--- 新增：调用状态更新
@@ -566,34 +669,25 @@ class AutodoriGUI:
 
     def stop_bot(self):
         # 优先设置停止信号，让内部循环能够尽快响应
-        if hasattr(autodori_ui, 'stop_event'):
+        if hasattr(autodori, 'stop_event'):
             logging.info("Sending stop signal to internal loop.")
-            autodori_ui.stop_event.set()  # <-- 这是关键的新增行
+            autodori.stop_event.set()  # <-- 这是关键的新增行
 
         # 然后再通知maatasker停止任务流
-        if hasattr(autodori_ui, 'maatasker') and autodori_ui.maatasker and autodori_ui.maatasker.running:
+        if hasattr(autodori, 'maatasker') and autodori.maatasker and autodori.maatasker.running:
             logging.info("Attempting to stop maatasker.")
-            autodori_ui.maatasker.post_stop()
+            autodori.maatasker.post_stop()
         else:
             pass
 
     def _run_bot_task(self, config_data):
         try:
             logging.info("Initialising.")
-            autodori_ui.init()
+            autodori.init()
             logging.info("Initialisation complete.")
 
-            mode = config_data.get("mode")
-            if mode == 'full_auto':
-                autodori_ui.run_full_auto_mode(config_data)
-            elif mode == 'single':
-                autodori_ui.run_single_mode_free(config_data)
-            elif mode == 'story':
-                autodori_ui.run_story_mode()
-            elif mode == 'medley':
-                autodori_ui.run_single_mode_free(config_data)
-            elif mode == 'rouge':
-                autodori_ui.run_rouge_mode()
+            # 直接把 config_data 传给统一的函数，无需再做 if 判断
+            autodori.run_task_mode(config_data)
 
             logging.info("Task completed.")
         except Exception as e:
@@ -601,9 +695,8 @@ class AutodoriGUI:
         finally:
             self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
-            # --- 新增: 恢复全局变量选项卡 ---
             self.notebook.tab(1, state='normal')
-            self._update_float_button_state()  # <<<--- 新增：调用状态更新
+            self._update_float_button_state()
 
     def _prevent_resize(self, event):
         """拦截并阻止PanedWindow的尺寸调整事件。"""
@@ -634,7 +727,16 @@ class AutodoriGUI:
 
         # 步骤2：调用后端的最终资源清理函数
         logging.info("Shutting down backend resources (Minitouch, ADB)...")
-        autodori_ui.shutdown_resources()
+        autodori.shutdown_resources()
+
+        cache_dir = autodori.resource_path("cache")
+        if cache_dir.exists() and cache_dir.is_dir():
+            try:
+                # 使用 rmtree 可以删除非空文件夹
+                shutil.rmtree(cache_dir)
+                logging.info("Cache folder deleted successfully.")
+            except Exception as e:
+                logging.error(f"Failed to delete cache folder: {e}")
 
         # 步骤3：所有清理完成后，销毁主窗口，正式退出
         logging.info("Cleanup complete. Exiting GUI.")
@@ -661,4 +763,5 @@ if __name__ == "__main__":
     # --- 新增代码结束 ---
     root = tk.Tk()
     app = AutodoriGUI(root)
+    root.protocol("WM_DELETE_WINDOW", app.on_app_exit)
     root.mainloop()

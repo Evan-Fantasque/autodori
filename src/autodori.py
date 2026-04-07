@@ -14,16 +14,36 @@ from typing import Optional, Union
 
 import requests
 
+
+def resource_path(relative_path):
+    """
+    Get the absolute path to a resource, compatible with both development environments
+    (including the 'src' directory layout) and PyInstaller-packaged environments.
+    """
+    if getattr(sys, 'frozen', False):
+        # When running in a packaged bundle, the base path is the temporary folder created by PyInstaller.
+        base_path = Path(sys._MEIPASS)
+    else:
+        # In a development environment, trace up one level from the current file's location (__file__)
+        # to the project root.
+        base_path = Path(__file__).parent.parent
+
+    return base_path / relative_path
+
+
+config_path = resource_path("config/config.yml")
+"""
 data_path = Path("data")
 data_path.mkdir(exist_ok=True)
 cache_path = Path("cache")
 cache_path.mkdir(exist_ok=True)
 config_path = Path("data/config.yml")
 Path("debug").mkdir(exist_ok=True)
+"""
 if not config_path.exists():
+    config_path.parent.mkdir(exist_ok=True)
     config_path.touch()
     config_path.write_text("{}", encoding="utf-8")
-
 
 import numpy as np
 from fuzzywuzzy import process as fzwzprocess
@@ -47,6 +67,7 @@ import player
 from api import BestdoriAPI
 from chart import Chart, PlayRecord
 from util import *
+import cv2
 
 MIN_LIVEBOOST = 1
 LIVEMODE = "freelive"
@@ -56,6 +77,23 @@ PHOTOGATE_LATENCY = 30
 DEFAULT_MOVE_SLICE_SIZE = 10
 MAX_FAILED_TIMES = 10
 CMD_SLICE_SIZE = 100
+MAX_CONTINUOUS_FAILED_TIMES = 10
+STABLE_THRESHOLD = 3
+CONSECUTIVE_FRAMES_NEEDED = 160
+FREEZE_SLEEP_TIME = 0.005
+CONFIDENCE_THRESHOLD_FAILURE = 0.8
+CONFIDENCE_THRESHOLD_PLAY = 0.9
+MAX_CONTINUOUS_NOT_FC_COUNT = 1  # A song will be skipped after failing to achieve a Full Combo this many times.
+MAX_ATTEMPT_COUNT = 1  # Maximum number of attempts per song in a single task session
+PLAY_FAILED_TIMES = 0
+HUMAN_DELAY_ENABLED = False
+IS_FULL_SONG = False
+IS_HIGH_DIFFICULTY = False
+SUPPORTED_DIFFICULTIES = ['easy', 'normal', 'hard', 'expert', 'special']
+NOT_FC_SONG_COUNT_DICT: dict[str, int] = {}  # Global variable to track songs that were not Full Combo'd.
+LAST_PLAYED_SONG_ID: Optional[str] = None  # Variable to record the last played song ID
+SONG_ATTEMPT_COUNT_DICT: dict[str, int] = {}  # Record total attempt count per song
+IS_INITIALISED = False  # Global initialisation status flag
 
 config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
 maaresource = Resource()
@@ -76,9 +114,11 @@ current_chart: Chart = None
 play_failed_times: int = 0
 callback_data: dict = {}
 callback_data_lock = threading.Lock()
-cmd_log_list: list[MNTEvATive7LogEventData] = []
+cmd_log_list: list = []
 cmd_log_list_lock = threading.Lock()
 current_version = None
+stop_event = threading.Event()
+playback_started_event = threading.Event()
 
 
 def reset_callback_data():
@@ -97,13 +137,27 @@ reset_callback_data()
 
 
 def check_song_available(name, id_, difficulty):
-    if name.startswith("[FULL]"):
+    if name.startswith("[FULL]") and not IS_FULL_SONG:
         return False
 
+    if id_:
+        attempt_count = SONG_ATTEMPT_COUNT_DICT.get(id_, 0)
+        if attempt_count >= MAX_ATTEMPT_COUNT:
+            logging.warning(f"Song '{name}' has reached max attempt count ({attempt_count}).")
+            return False
+
+        not_fc_count = NOT_FC_SONG_COUNT_DICT.get(id_, 0)
+        if not_fc_count >= MAX_CONTINUOUS_NOT_FC_COUNT:
+            logging.warning(f"Song '{name}' has reached the non-FC limit ({not_fc_count}).")
+            NOT_FC_SONG_COUNT_DICT[id_] = 0  # 重置计数器
+            return False
+
+    """
     lastmatched = PlayRecord.get_or_none(chart_id=id_, difficulty=difficulty)
     if lastmatched:
         if not lastmatched.succeed:
             return True
+    """
 
     return True
 
@@ -114,47 +168,80 @@ class SongRecognition(CustomRecognition):
         self, context: Context, argv: CustomRecognition.AnalyzeArg
     ) -> Union[CustomRecognition.AnalyzeResult, Optional[RectType]]:
 
-        roi = [200, 332, 368, 29]
+        if LIVEMODE == "medley":
+            roi = [110, 545, 370, 30]
+        elif LIVEMODE == "free_single":
+            roi = [220, 545, 570, 30]
+        else:
+            roi = [200, 330, 370, 30]
+
+        models_to_try = ["ppocr_v5/zh_cn-server", "ppocr_v3/zh_cn"]
 
         def match(model=None):
-            pplname = "_ocrsong_" + "".join(random.choices(string.ascii_lowercase, k=7))
             pipeline = {
-                pplname: {
+                "_ocr_song": {
                     "recognition": "OCR",
                     "only_rec": True,
                     "roi": roi,
                 },
             }
             if model != None:
-                pipeline[pplname]["model"] = model
+                pipeline["_ocr_song"]["model"] = model
             try:
-                song_fuzzyname = context.run_recognition(
-                    pplname,
-                    argv.image,
-                    pipeline,
-                ).best_result.text
-            except:
-                song_fuzzyname = ""
-            return fuzzy_match_song(song_fuzzyname)
+                ocr_text = context.run_recognition("_ocr_song", argv.image, pipeline).best_result.text
+                logging.info(f"OCR ({model or 'default'}) raw text: '{ocr_text}'")
 
-        jpmatch = match("ppocr_v3/ja_jp")
-        commonmatch = match()  # , "ppocr_v4/zh_cn")
-        logging.debug(
-            "Match result with ppocr_v3/ja_jp: {}, Match result with default: {}".format(
-                jpmatch, commonmatch
-            )
-        )
-        result = sorted([jpmatch, commonmatch], key=lambda x: x[1], reverse=True)
-        if all([r[1] < 50 for r in result]):
-            return CustomRecognition.AnalyzeResult(None, "")
-        result_music_name = result[0][0]
+                if LIVEMODE not in ["medley", "free_single"] and "full" in ocr_text.lower():
+                    return 100
 
-        if not check_song_available(
-            result_music_name, all_song_name_indexes[result_music_name], DIFFICULTY
-        ):
-            return CustomRecognition.AnalyzeResult(None, "")
+                match = fuzzy_match_song(ocr_text)
+                if not match:
+                    return None
 
-        return CustomRecognition.AnalyzeResult(roi, result_music_name)
+                matched_name, raw_score = match[0], match[1]
+
+                len_ocr = len(ocr_text)
+                len_matched = len(matched_name)
+                length_ratio = min(len_ocr, len_matched) / max(len_ocr, len_matched) if len_ocr and len_matched else 0
+                adjusted_score = raw_score * length_ratio
+
+                logging.info(
+                    f"Adjusted score for '{matched_name}' with length penalty ({model or 'default'}): "
+                    f"{adjusted_score:.2f} (raw: {raw_score}, len_ratio: {length_ratio:.2f})"
+                )
+                return (matched_name, adjusted_score)
+
+            except Exception as e:
+                logging.error(f"OCR ({model or 'default'}) execution failed: {e}")
+                return None
+
+        results = [m for m in [match(model) for model in models_to_try] if m]
+
+        if not results or 100 in results:
+            return self.AnalyzeResult(None, "")
+
+        best_match = max(results, key=lambda x: x[1])
+
+        if best_match and best_match[1] > 50:
+            matched_song_name = best_match[0]
+            adjusted_confidence = best_match[1]
+
+            if LIVEMODE == "free_single":
+                if IS_FULL_SONG:
+                    matched_song_name = "[FULL] " + matched_song_name
+                elif IS_HIGH_DIFFICULTY:
+                    matched_song_name = "[超高難易度 SPECIAL] " + matched_song_name
+
+            song_id = all_song_name_indexes.get(best_match[0])
+
+            if not check_song_available(matched_song_name, song_id, DIFFICULTY):
+                return self.AnalyzeResult(None, "")
+
+            logging.info(f"Song recognised: '{matched_song_name}' (Adjusted Confidence: {adjusted_confidence:.2f}%)")
+            return self.AnalyzeResult(roi, matched_song_name)
+
+        return self.AnalyzeResult(None, "")
+
 
 
 @maaresource.custom_recognition("LiveBoostEnoughRecognition")
@@ -269,15 +356,83 @@ class PlayResultRecognition(CustomRecognition):
 class SavePlayResult(CustomAction):
     def run(self, context: Context, argv: CustomAction.RunArg):
         try:
-            global current_song_id, play_failed_times
-            succeed: bool = json.loads(argv.custom_action_param).get("succeed")
+            global PLAY_FAILED_TIMES, NOT_FC_SONG_COUNT_DICT, LAST_PLAYED_SONG_ID, SONG_ATTEMPT_COUNT_DICT
+
+            param = argv.custom_action_param
+            try:
+                succeed = json.loads(param).get("succeed", False)
+            except (json.JSONDecodeError, TypeError):
+                logging.error("Failed to parse custom_action_param.")
+                succeed = False
+
+            playresult = {}
+            if succeed and argv.reco_detail and argv.reco_detail.best_result:
+                try:
+                    playresult = argv.reco_detail.best_result.detail
+
+                    perfect = playresult.get('perfect', -1)
+                    great = playresult.get('great', -1)
+                    good = playresult.get('good', -1)
+                    bad = playresult.get('bad', -1)
+                    miss = playresult.get('miss', -1)
+                    maxcombo = playresult.get('maxcombo', -1)
+
+                    is_not_fc = False
+                    reasons = []
+
+                    is_ap_by_sum = (
+                            perfect != -1 and
+                            great != -1 and
+                            maxcombo != -1 and
+                            (perfect + great) == maxcombo
+                    )
+
+                    if is_ap_by_sum:
+                        is_not_fc = False
+                    else:
+                        if -1 in [perfect, great, good, bad, miss, maxcombo]:
+                            is_not_fc = True
+                            reasons.append("OCR Failed")
+                        else:
+                            if bad > 0:
+                                reasons.append(f"Bad: {bad}")
+                            if miss > 0:
+                                reasons.append(f"Miss: {miss}")
+                            if good > 0:
+                                reasons.append(f"Good: {good}")
+
+                            sum_of_judgements = perfect + great
+                            if maxcombo != sum_of_judgements:
+                                reasons.append(f"P+G={sum_of_judgements}, MaxCombo={maxcombo}")
+
+                            if reasons:
+                                is_not_fc = True
+
+                    if is_not_fc and current_song_id:
+                        current_count = NOT_FC_SONG_COUNT_DICT.get(current_song_id, 0)
+                        NOT_FC_SONG_COUNT_DICT[current_song_id] = current_count + 1
+                        logging.warning(
+                            f"Song '{current_song_name}' did not achieve a Full Combo. "
+                            f"Total count: {NOT_FC_SONG_COUNT_DICT[current_song_id]} "
+                            f"Reasons: {', '.join(reasons)}"
+                        )
+
+                except json.JSONDecodeError:
+                    logging.error("Failed to parse play result JSON.")
+                    playresult = {}
+
+            # Increment failure count only on explicit failures (e.g., live failed, pipeline error).
             if succeed:
-                playresult = argv.reco_detail.best_result.detail
-                if isinstance(playresult, str):
-                    playresult = json.loads(argv.reco_detail.best_result.detail)
-            else:
-                play_failed_times += 1
-                playresult = {}
+                # If task is successful and there were previous failures, log and reset counter
+                if PLAY_FAILED_TIMES > 0:
+                    logging.info(
+                        f"Task successful, resetting continuous failure count from {PLAY_FAILED_TIMES} to zero.")
+                PLAY_FAILED_TIMES = 0
+            else:  # 'not succeed' case
+                # If task failed, increment counter unconditionally
+                PLAY_FAILED_TIMES += 1
+                logging.info(f"Recording one task failure, current continuous failure count: {PLAY_FAILED_TIMES}")
+
             PlayRecord.create(
                 play_time=int(time.time()),
                 play_offset=OFFSET,
@@ -286,8 +441,18 @@ class SavePlayResult(CustomAction):
                 chart_id=current_song_id,
                 difficulty=DIFFICULTY,
             )
-            if play_failed_times >= MAX_FAILED_TIMES:
-                logging.error("Failed attempts exceed max failed times")
+
+            if current_song_id:
+                current_attempts = SONG_ATTEMPT_COUNT_DICT.get(current_song_id, 0)
+                SONG_ATTEMPT_COUNT_DICT[current_song_id] = current_attempts + 1
+                logging.info(
+                    f"Song '{current_song_name}' has been attempted {SONG_ATTEMPT_COUNT_DICT[current_song_id]} times.")
+
+            LAST_PLAYED_SONG_ID = current_song_id
+
+            if PLAY_FAILED_TIMES >= MAX_CONTINUOUS_FAILED_TIMES:
+                logging.error(
+                    f"Continuous failure limit reached ({MAX_CONTINUOUS_FAILED_TIMES}). Stopping automatically.")
                 context.run_action("close_app")
                 context.run_action("stop")
             return CustomAction.RunResult(True)
@@ -299,12 +464,25 @@ class SavePlayResult(CustomAction):
 @maaresource.custom_action("Play")
 class Play(CustomAction):
     def run(self, context: Context, argv: CustomAction.RunArg):
+        global stop_event, playback_started_event
+        stop_event.clear()
+        playback_started_event.clear()
+        monitor = threading.Thread(
+            target=monitor_failure_thread,
+            args=(stop_event, playback_started_event),
+            daemon=True
+        )
         try:
-            play_song()
+            monitor.start()
+            play_song(stop_event, playback_started_event)
+            stop_event.set()
             return CustomAction.RunResult(True)
         except Exception as e:
-            logging.error(f"Failed when play song: {e}", stack_info=True)
+            stop_event.set()
+            logging.error(f"Error during song playback: {e}", exc_info=True)
             return CustomAction.RunResult(False)
+        finally:
+            monitor.join(timeout=5)
 
 
 @maaresource.custom_action("SaveSong")
@@ -313,6 +491,29 @@ class SaveSong(CustomAction):
         name: CustomRecognitionResult = argv.reco_detail.best_result.detail
         save_song(name)
         return CustomAction.RunResult(True)
+
+
+@maaresource.custom_recognition("RecognizeLevelUp")
+class RecognizeLevelUp(CustomRecognition):
+    def analyze(self, context: Context, argv: CustomRecognition.AnalyzeArg):
+        roi = [590, 640, 100, 30]
+        target_text = "LevelUP!"
+        confidence_threshold = 85
+
+        try:
+            pipeline = {"_ocr_levelup": {"recognition": "OCR", "roi": roi, "only_rec": True}}
+            ocr_text = context.run_recognition("_ocr_levelup", argv.image, pipeline).best_result.text
+
+            match = fzwzprocess.extractOne(ocr_text, [target_text])
+
+            if match and match[1] >= confidence_threshold:
+                return self.AnalyzeResult(roi, target_text)
+            else:
+                score = match[1] if match else 0
+                return self.AnalyzeResult(None, "")
+
+        except Exception as e:
+            return self.AnalyzeResult(None, "")
 
 
 def fuzzy_match_song(name):
@@ -354,15 +555,15 @@ def save_song(name):
     current_song_name = name
     current_song_id = all_song_name_indexes[current_song_name]
     current_chart = Chart((current_song_id, DIFFICULTY), current_song_name)
-    current_chart.notes_to_actions(current_player.resolution, DEFAULT_MOVE_SLICE_SIZE)
+    current_chart.notes_to_actions(current_player.resolution, DEFAULT_MOVE_SLICE_SIZE, humanize=HUMAN_DELAY_ENABLED)
     current_orientation = _get_orientation()
     current_chart.actions_to_MNTcmd(
         (mnt.max_x, mnt.max_y), current_orientation, OFFSET, CMD_SLICE_SIZE
     )
-    logging.debug("Save song: {}".format(name))
+    logging.info(f"Saved song: {name}")
 
 
-def play_song():
+def play_song(stop_event, playback_started_event):
     logging.info("Start play")
     cmd_log_list.clear()
     reset_callback_data()
@@ -389,9 +590,49 @@ def play_song():
         logging.debug("Adjust offset: {}".format(OFFSET))
         logging.debug("Adjust _actions_to_cmd_offset: {}".format(total_cost))
 
-    wait_first_note()
+    logging.info("Waiting for game to load, detecting pause button.")
+    template_path = resource_path("assets/resource/image/live/button/pause.png")
+    if not template_path.exists():
+        logging.error(f"Pause button template image not found: {template_path}")
+        return
+    template = get_scaled_template(template_path)
+    if template is None:
+        logging.error(f"Failed to load template image: {template_path}")
+        return
+
+    pause_button_found = False
+    wait_start_time = time.time()
+    playback_started_event.set()
+
+    while not pause_button_found:
+        wait_timeout = 30
+        wait_current_time = time.time()
+        if wait_current_time - wait_start_time > wait_timeout:
+            logging.error(f"Waiting for pause button timeout ({wait_current_time - wait_start_time}s), aborting.")
+            return
+        if check_exit_status(stop_event):
+            return
+
+        screen = current_player.ipc_capture_display()
+        height, width, _ = screen.shape
+        roi_screen = screen[0:int(height * 0.15), width - int(height * 0.15):width]
+        gray_roi = cv2.cvtColor(roi_screen, cv2.COLOR_BGR2GRAY)
+        result = cv2.matchTemplate(gray_roi, template, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, _ = cv2.minMaxLoc(result)
+
+        logging.debug(f"Waiting for pause button, match confidence: {max_val:.2f}")
+        if max_val >= CONFIDENCE_THRESHOLD_PLAY:
+            pause_button_found = True
+        else:
+            time.sleep(0.5)
+
+    if not wait_first_note(stop_event):
+        return
 
     while True:
+        if check_exit_status(stop_event):
+            return
+
         current_chart.command_builder.publish(mnt, block=False)
         wait_time = _get_wait_time()
         time.sleep(max(0, wait_time - 3) / 1000)
@@ -406,102 +647,133 @@ def play_song():
             )
         else:
             break
+
     time.sleep(2)
+    logging.info("Playback finished.")
 
 
-def wait_first_note():
+def wait_first_note(stop_event):
     last_color = None
     waited_frames = 0
     info = get_runtime_info(current_player.resolution)["wait_first"]
     from_row, to_row = info["from"], info["to"]
     freezed = False
+    playback_start_time = time.time()
 
     while True:
+        playback_timeout = 500
+        playback_current_time = time.time()
+        if playback_current_time - playback_start_time > playback_timeout:
+            logging.error(f"Playback timeout ({playback_current_time - playback_start_time}s), aborting.")
+            return False
+        if check_exit_status(stop_event):
+            return False
+
         try:
             screen = current_player.ipc_capture_display()
             cur_color, _ = get_color_eval_in_range(screen, from_row, to_row)
 
             if last_color is not None:
-                change_score = np.sum(cur_color[0:3] - last_color[0:3])
-                logging.debug(f"Picture changed: {change_score}")
-                if change_score > 3:
+                change_score = np.sum(np.abs(cur_color[:3].astype(int) - last_color[:3].astype(int)))
+
+                if change_score > STABLE_THRESHOLD:
                     if freezed:
-                        logging.debug(
-                            f"The first note falls between {from_row}-{to_row}"
-                        )
+                        logging.info("First note detected, starting playback.")
                         time.sleep(PHOTOGATE_LATENCY / 1000)
-                        break
+                        return True
                 else:
                     if not freezed:
                         waited_frames += 1
 
-                if not freezed and waited_frames >= 200:
+                if not freezed and waited_frames >= CONSECUTIVE_FRAMES_NEEDED:
                     freezed = True
-                    logging.debug("Picture freezed, waiting for the first note...")
+                    logging.info("Screen has frozen. Photogate is ready.")
 
             last_color = cur_color
+            time.sleep(FREEZE_SLEEP_TIME)
+
         except Exception as e:
-            logging.error(f"Failed to get screen: {e}")
+            logging.error(f"Error during photogate detection: {e}")
+            return False
+
+
+def check_exit_status(stop_event):
+    if stop_event.is_set():
+        logging.warning("Playback failed, exiting.")
+        return True
+    return False
 
 
 def init_maa():
-    user_path = "./"
-    resource_path = "assets/resource"
-
-    res_job = maaresource.post_bundle(resource_path)
+    res_job = maaresource.post_bundle(resource_path("assets/resource"))
     res_job.wait()
-    Toolkit.init_option(user_path)
+    Toolkit.init_option(resource_path(""))
     for i in range(3):
         adb_devices = Toolkit.find_adb_devices()
         if adb_devices:
             break
     if not adb_devices:
-        logging.fatal("No ADB device found.")
-        sys.exit(1)
+        raise RuntimeError("No ADB devices found.")
 
     global device, maacontroller
     _device: list[AdbDevice] = []
     for device in adb_devices:
         extra_names = device.config.get("extras", {}).keys()
-        if "mumu" in extra_names or "ld" in extra_names:
+        if "mumu" in extra_names:
             if (device.name, device.address) not in [
-                (d.name, d.address) for d in _device
+                (x.name, x.address) for x in _device
             ]:
                 _device.append(device)
+
+    """
     filter_str = config.get("device", {}).get("filter", "devices")
     _device = eval(filter_str, {}, {"devices": _device})
+    """
 
     if not _device:
-        logging.fatal("No supported devices were found.")
-        sys.exit(1)
+        raise RuntimeError("No supported emulators found.")
+    else:
+        device = _device[0]
+
+    """
     elif len(_device) == 1:
         device = _device[0]
     elif len(_device) > 1:
         print("Multiple devices were found:")
-        for i, device in enumerate(_device):
-            print(f"{i}: {device.name}({device.address})")
+        for i, d in enumerate(_device):
+            print(f"{i}: {d.name}({d.address})")
         selected = input("Select a device: ")
         device = _device[int(selected)]
+    """
+
+    logging.info(f"Using device: {device.name} at {device.address}")
+
     maacontroller = AdbController(
         adb_path=device.adb_path,
         address=device.address,
-        screencap_methods=device.screencap_methods,
-        input_methods=device.input_methods,
         config=device.config,
     )
+    """
+        screencap_methods=device.screencap_methods,
+        input_methods=device.input_methods,
+    """
 
+    is_connected = False
     for i in range(3):
         if maacontroller.post_connection().wait().succeeded:
+            is_connected = True
             break
+
+    if not is_connected:
+        raise RuntimeError(f"Failed to connect controller to device {device.name}.")
 
     # tasker = Tasker(notification_handler=MyNotificationHandler())
     maatasker.bind(maaresource, maacontroller)
 
     if not maatasker.inited:
-        logging.fatal("Failed to init MAA.")
-        sys.exit(1)
+        raise RuntimeError("Failed to initialise MAA tasker module.")
 
-    logging.info("MAA inited.")
+    logging.info("MAA initialised successfully.")
 
 
 def mnt_callback(event: MNTEvent, data: MNTEventData):
@@ -516,54 +788,55 @@ def mnt_callback(event: MNTEvent, data: MNTEventData):
             cmd_log_list.append(data)
         cmd_type = cmd.split(" ")[0]
 
-        callback_data_lock.acquire()
-
-        if (last_cmd_endtime := callback_data.get("last_cmd_endtime")) != -1:
-            callback_data["interval"]["total"] += 1
-            callback_data["interval"]["total_offset"] += (
-                data.start_time - last_cmd_endtime
-            )
-        callback_data["last_cmd_endtime"] = data.end_time
-        if cmd_type in ["w"]:
-            callback_data["wait"]["total"] += 1
-            callback_data["wait"]["total_offset"] += cost - int(cmd.split(" ")[-1])
-        elif cmd_type in ["u", "d", "m"]:
-            type_ = {
-                "u": "up",
-                "d": "down",
-                "m": "move",
-            }[cmd_type]
-            callback_data[type_]["uncommited"] += 1
-            callback_data[type_]["total"] += 1
-            callback_data[type_]["total_offset"] += cost
-        elif cmd_type in ["c"]:
-            total_uncommited = 0
-            for type_ in ["up", "down", "move"]:
-                total_uncommited += callback_data[type_]["uncommited"]
-
-            if total_uncommited != 0:
+        with callback_data_lock:
+            if (last_cmd_endtime := callback_data.get("last_cmd_endtime")) != -1:
+                callback_data["interval"]["total"] += 1
+                callback_data["interval"]["total_offset"] += (
+                        data.start_time - last_cmd_endtime
+                )
+            callback_data["last_cmd_endtime"] = data.end_time
+            if cmd_type in ["w"]:
+                callback_data["wait"]["total"] += 1
+                callback_data["wait"]["total_offset"] += cost - int(cmd.split(" ")[-1])
+            elif cmd_type in ["u", "d", "m"]:
+                type_ = {
+                    "u": "up",
+                    "d": "down",
+                    "m": "move",
+                }[cmd_type]
+                callback_data[type_]["uncommited"] += 1
+                callback_data[type_]["total"] += 1
+                callback_data[type_]["total_offset"] += cost
+            elif cmd_type in ["c"]:
+                total_uncommited = 0
                 for type_ in ["up", "down", "move"]:
-                    callback_data[type_]["total_offset"] += cost * (
-                        callback_data[type_]["uncommited"] / total_uncommited
-                    )
-                    callback_data[type_]["uncommited"] = 0
-        callback_data_lock.release()
+                    total_uncommited += callback_data[type_]["uncommited"]
+
+                if total_uncommited != 0:
+                    for type_ in ["up", "down", "move"]:
+                        callback_data[type_]["total_offset"] += cost * (
+                                callback_data[type_]["uncommited"] / total_uncommited
+                        )
+                        callback_data[type_]["uncommited"] = 0
 
 
 def init_player_and_mnt():
     global current_player, mnt
 
+    if not device: raise RuntimeError("MAA device not initialised before initialising player.")
+
     extra_config = device.config["extras"]
     if "mumu" in extra_config.keys():
         extra_config = extra_config["mumu"]
         type_ = "mumu"
+        """
         if device.name == "MuMuPlayer12":
             type_ += "v4"
+        """
         if device.name == "MuMuPlayer12 v5":
             type_ += "v5"
-    elif "ld" in extra_config.keys():
-        extra_config = extra_config["ld"]
-        type_ = "ld"
+    else:
+        raise RuntimeError(f"Unsupported emulator type: {list(extra_config.keys())}")
 
     path = extra_config["path"]
     index = extra_config["index"]
@@ -573,12 +846,12 @@ def init_player_and_mnt():
         device.address,
         type_="EvATive7",
         communicate_type=MNTServerCommunicateType.STDIO,
-        mnt_asset_path=Path("./assets/minitouch_EvATive7"),
+        mnt_asset_path=resource_path("assets/minitouch_EvATive7"),
         callback=mnt_callback,
         adb_executor=str(device.adb_path.absolute()),
     )
 
-    logging.info("Mumu and MNT inited.")
+    logging.info(f"{type_} player and Minitouch initialised successfully.")
 
 
 def configure_log():
@@ -741,5 +1014,175 @@ def main():
     sys.exit()
 
 
+"""
 if __name__ == "__main__":
     main()
+"""
+
+
+def get_scaled_template(template_path):
+    template = cv2.imread(template_path, 0)
+    runtime_h, runtime_w, _ = current_player.ipc_capture_display().shape
+    scale_factor = runtime_w / 1920
+    if np.isclose(scale_factor, 1.0):
+        return template
+    original_h, original_w = template.shape[:2]
+    new_w = int(original_w * scale_factor)
+    new_h = int(original_h * scale_factor)
+    if new_w < 1 or new_h < 1:
+        return template
+    resized_template = cv2.resize(template, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    return resized_template
+
+
+def monitor_failure_thread(stop_event, playback_started_event):
+    """
+    A background monitoring thread.
+    It waits for the playback start signal, then continuously monitors for the "Live Failed" screen through image matching.
+    """
+    try:
+        logging.info("Monitor thread started, waiting for playback start signal.")
+
+        # Wait for "playback started" signal from play_song function, timeout after 60s
+        playback_started_event.wait(timeout=30)
+
+        if not playback_started_event.is_set():
+            logging.warning("Timeout waiting for playback start signal, monitor thread exiting.")
+            stop_event.set()
+            return
+
+        logging.info("Received playback start signal, starting screen monitoring.")
+
+        # Load template image once for efficiency
+        # Note: Please ensure this path matches your project resource path
+        fail_template_path = resource_path("assets/resource/image/live/live_failed.png")
+        if not fail_template_path.exists():
+            logging.error(
+                f"Live Failed template image not found: {fail_template_path}, monitor thread cannot work.")
+            stop_event.set()
+            return
+
+        template = get_scaled_template(fail_template_path)
+
+        # Monitor loop until stop signal received
+        while not stop_event.is_set():
+            screen_bgr = current_player.ipc_capture_display()
+            if screen_bgr is None:
+                time.sleep(1)
+                continue
+
+            screen_gray = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2GRAY)
+
+            # Perform template matching
+            result = cv2.matchTemplate(screen_gray, template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(result)
+
+            if max_val >= CONFIDENCE_THRESHOLD_FAILURE:
+                logging.error(f"Detected 'Live Failed' screen (match: {max_val:.2f})! Sending stop signal!")
+                stop_event.set()  # Key: Set stop event to notify other threads
+                break  # Task complete, exit loop
+
+            # Monitor every 1s to avoid high CPU usage
+            time.sleep(1)
+
+    except Exception as e:
+        logging.error(f"Monitor thread encountered unexpected error: {e}", exc_info=True)
+        stop_event.set()
+    finally:
+        logging.info("Monitor thread terminated.")
+
+
+def init():
+    global IS_INITIALISED
+    if IS_INITIALISED:
+        logging.info("Components are already initialised. Skipping.")
+        return
+    try:
+        init_maa()
+        init_player_and_mnt()
+        IS_INITIALISED = True
+    except Exception as e:
+        IS_INITIALISED = False
+        logging.error("Initialisation failed.", exc_info=True)
+        raise e
+
+
+def shutdown_resources():
+    global mnt, maacontroller, maatasker
+
+    if maatasker and maatasker.running:
+        logging.info("Final shutdown: Stopping MAA tasker.")
+        maatasker.post_stop()
+
+    if mnt:
+        logging.info("Disconnecting Minitouch...")
+        try:
+            mnt.disconnect()
+            mnt = None
+        except Exception as e:
+            logging.error(f"Error disconnecting Minitouch: {e}", exc_info=True)
+
+    if maacontroller:
+        logging.info("Disconnecting MAA AdbController...")
+        try:
+            if maacontroller.post_disconnect().wait().succeeded:
+                logging.info("AdbController disconnected successfully.")
+            else:
+                logging.warning("Failed to disconnect AdbController cleanly.")
+            maacontroller = None
+        except Exception as e:
+            logging.error(f"Error disconnecting AdbController: {e}", exc_info=True)
+
+
+def run_task_mode(config_data):
+    global DIFFICULTY, HUMAN_DELAY_ENABLED, LIVEMODE
+    global MAX_CONTINUOUS_NOT_FC_COUNT, MAX_ATTEMPT_COUNT, PLAY_FAILED_TIMES, NOT_FC_SONG_COUNT_DICT
+
+    if not maacontroller or not mnt:
+        raise RuntimeError("MAA is not initialised.")
+
+    mode = config_data.get("mode", "full_auto")
+
+    DIFFICULTY = config_data.get("difficulty", "hard")
+    HUMAN_DELAY_ENABLED = config_data.get("human_delay", False)
+    MAX_CONTINUOUS_NOT_FC_COUNT = config_data.get("max_continuous_not_fc_count", 1)
+    MAX_ATTEMPT_COUNT = config_data.get("max_attempt_count", 3)
+
+    PLAY_FAILED_TIMES = 0
+    NOT_FC_SONG_COUNT_DICT.clear()
+
+    mode_configs = {
+        "single": ("free_single", "ui_simplified_entry", ["single.json"]),
+        "medley": ("medley", "ui_simplified_entry", ["single.json"]),
+        "story": ("story", "read_story", ["story.json"]),
+        "rouge": ("rouge", "start_from_main_menu", ["rouge.json"]),
+        "full_auto": ("auto", "select_song", ["full_auto.json"])
+    }
+
+    if mode not in mode_configs:
+        logging.error(f"Unknown mode: {mode}")
+        return
+
+    livemode_val, entry_task, json_files = mode_configs[mode]
+    LIVEMODE = livemode_val
+
+    pipeline_def_path = resource_path("assets/resource/pipeline")
+    override_pipeline = {}
+
+    for json_filename in json_files:
+        file_path = pipeline_def_path / json_filename
+        if file_path.exists():
+            with open(file_path, 'r', encoding='utf-8') as f:
+                try:
+                    data = json.load(f)
+                    override_pipeline.update(data)
+                except json.JSONDecodeError as e:
+                    logging.error(f"Parsing {json_filename} failed, please check JSON format: {e}")
+                    return
+        else:
+            logging.error(f"Cannot find required Pipeline configuration file: {file_path}")
+            return
+
+    logging.info(f"Submitting {mode} Mode auto-play task. Entry: {entry_task}")
+    maatasker.post_task(entry_task, override_pipeline).wait()
+    logging.info(f"{mode} Mode task finished or stopped.")
