@@ -171,7 +171,7 @@ class SongRecognition(CustomRecognition):
         elif LIVEMODE == "free_auto":
             roi = [200, 330, 370, 30]
 
-        models_to_try = ["ppocr_v5/zh_cn"]
+        models_to_try = ["ppocr_v5/zh_cn-server",""]
 
         def match(model=None):
             pipeline = {
