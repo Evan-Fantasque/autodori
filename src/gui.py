@@ -46,7 +46,7 @@ class AutodoriGUI:
         self.float_window = None # Toplevel 实例
 
         # --- 为UI控件创建Tkinter变量 ---
-        self.mode_var = tk.StringVar(value='full_auto')
+        self.mode_var = tk.StringVar(value='free_auto')
         self.difficulty_var = tk.StringVar(value=autodori.DIFFICULTY)
         self.human_var = tk.BooleanVar(value=autodori.HUMAN_DELAY_ENABLED)
         self.max_continuous_not_fc_var = tk.IntVar(value=autodori.MAX_CONTINUOUS_NOT_FC_COUNT)
@@ -86,7 +86,7 @@ class AutodoriGUI:
         # 注意：这里我们不再对 queue_handler 设置格式，让根记录器统一处理
 
         # --- 新增：设置文件日志 (用于输出到文件) ---
-        debug_folder = autodori.resource_path("debug")
+        debug_folder = autodori.data_path("debug")
         os.makedirs(debug_folder, exist_ok=True)  # 创建debug文件夹
 
         # 创建带时间戳的日志文件名
@@ -339,9 +339,9 @@ class AutodoriGUI:
         mode_frame = ttk.Frame(config_frame)
         mode_frame.pack(fill=tk.X, padx=2, pady=2)
         ttk.Label(mode_frame, text="模式:").pack(side=tk.LEFT)
-        ttk.Radiobutton(mode_frame, text="自由演出——单曲模式", variable=self.mode_var, value='single', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(mode_frame, text="自由演出——全自动模式", variable=self.mode_var, value='full_auto', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(mode_frame, text="巡回演出——单曲模式", variable=self.mode_var, value='medley', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="自由演出——单曲模式", variable=self.mode_var, value='free_single', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="自由演出——全自动模式", variable=self.mode_var, value='free_auto', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="巡回演出——单曲模式", variable=self.mode_var, value='medley_single', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
         #ttk.Radiobutton(mode_frame, text="story", variable=self.mode_var, value='story', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
         #ttk.Radiobutton(mode_frame, text="rouge", variable=self.mode_var, value='rouge', command=self._on_mode_change).pack(side=tk.LEFT, padx=5)
 
@@ -402,7 +402,7 @@ class AutodoriGUI:
     def _on_mode_change(self):
         """当模式（单曲/全自动）切换时，动态显示或隐藏相关配置项。"""
         mode = self.mode_var.get()
-        if mode == 'full_auto':
+        if mode == 'free_auto':
             # 在全自动模式下：显示FC相关设置
             self.fc_options_frame.pack(side=tk.LEFT, after=self.difficulty_combobox)
         else:
@@ -654,18 +654,16 @@ class AutodoriGUI:
         self.save_settings()
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
-        self._update_float_button_state() # <<<--- 新增：调用状态更新
-        # --- 新增: 禁用全局变量选项卡 ---
+        self._update_float_button_state()
         self.notebook.tab(1, state='disabled')
 
-        config_data = {
-            "mode": self.mode_var.get(),
-            "difficulty": self.difficulty_var.get(),
-            "human_delay": self.human_var.get(),
-            "max_continuous_not_fc_count": self.max_continuous_not_fc_var.get(),
-            "max_attempt_count": self.max_attempt_var.get()
-        }
-        self.bot_thread = threading.Thread(target=self._run_bot_task, args=(config_data,), daemon=True)
+        autodori.LIVEMODE = self.mode_var.get()
+        autodori.DIFFICULTY = self.difficulty_var.get()
+        autodori.HUMAN_DELAY_ENABLED = self.human_var.get()
+        autodori.MAX_CONTINUOUS_NOT_FC_COUNT = self.max_continuous_not_fc_var.get()
+        autodori.MAX_ATTEMPT_COUNT = self.max_attempt_var.get()
+
+        self.bot_thread = threading.Thread(target=self._run_bot_task, daemon=True)
         self.bot_thread.start()
 
     def stop_bot(self):
@@ -681,14 +679,14 @@ class AutodoriGUI:
         else:
             pass
 
-    def _run_bot_task(self, config_data):
+    def _run_bot_task(self):
         try:
             logging.info("Initialising.")
             autodori.init()
             logging.info("Initialisation complete.")
 
             # 直接把 config_data 传给统一的函数，无需再做 if 判断
-            autodori.run_task_mode(config_data)
+            autodori.run_task_mode()
 
             logging.info("Task completed.")
         except Exception as e:
@@ -730,7 +728,7 @@ class AutodoriGUI:
         logging.info("Shutting down backend resources (Minitouch, ADB)...")
         autodori.shutdown_resources()
 
-        cache_dir = autodori.resource_path("cache")
+        cache_dir = autodori.data_path("cache")
         if cache_dir.exists() and cache_dir.is_dir():
             try:
                 # 使用 rmtree 可以删除非空文件夹
