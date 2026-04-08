@@ -1,0 +1,90 @@
+{
+  "read_story": {
+    "recognition": "OCR",
+    "expected": "阅读",
+    "action": "Click",
+    "post_delay": 1500,
+    "next": [
+      "no_voice_button"
+    ],
+    "interrupt": [
+      "confirm_button_story",
+      "read_story"
+    ],
+    "roi": [
+      1030,
+      630,
+      100,
+      40
+    ]
+  },
+  "no_voice_button": {
+    "recognition": "OCR",
+    "expected": "无语音",
+    "action": "Click",
+    "next": [
+      "reader_menu_story"
+    ],
+    "interrupt": [
+      "read_story",
+      "no_voice_button"
+    ],
+    "roi": [
+      590,
+      560,
+      100,
+      40
+    ]
+  },
+  "reader_menu_story": {
+    "recognition": "TemplateMatch",
+    "template": "common/reader/menu.png",
+    "action": "Click",
+    "next": "reader_skip_story",
+    "interrupt": [
+      "no_voice_button",
+      "reader_menu_story"
+    ]
+  },
+  "reader_skip_story": {
+    "recognition": "TemplateMatch",
+    "template": "common/reader/skip.png",
+    "action": "Click",
+    "next": "skip_button_story",
+    "post_delay": 1500,
+    "interrupt": [
+      "reader_menu_story",
+      "reader_skip_story"
+    ]
+  },
+  "skip_button_story": {
+    "recognition": "TemplateMatch",
+    "template": "common/button/skip/pink.png",
+    "action": "Click",
+    "next": "confirm_button_story",
+    "interrupt": [
+      "reader_skip_story",
+      "skip_button_story"
+    ]
+  },
+  "confirm_button_story": {
+    "recognition": "OCR",
+    "expected": "确定",
+    "action": "Click",
+    "post_delay": 1500,
+    "next": [
+      "read_story"
+    ],
+    "interrupt": [
+      "skip_button_story",
+      "confirm_button_story"
+    ],
+    "roi": [
+      600,
+      530,
+      100,
+      40
+    ]
+  }
+}
+  

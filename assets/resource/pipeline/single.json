@@ -1,0 +1,35 @@
+{
+  "ui_simplified_entry": {
+    "recognition": "Custom",
+    "custom_recognition": "SongRecognition",
+    "action": "Custom",
+    "custom_action": "SaveSong",
+    "next": [
+      "startlivesingle"
+    ],
+    "timeout": 15000,
+    "on_error": [
+      "stop"
+    ]
+  },
+  "startlivesingle": {
+    "action": "Click",
+    "next": [
+      "playsongsingle"
+    ],
+    "on_error": [
+      "stop"
+    ],
+    "recognition": "TemplateMatch",
+    "template": "live/button/live_medley.png",
+    "threshold": 0.5
+  },
+  "playsongsingle": {
+    "action": "Custom",
+    "custom_action": "Play",
+    "next": [
+      "stop"
+    ],
+    "timeout": 500000
+  }
+}

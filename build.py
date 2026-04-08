@@ -8,32 +8,53 @@ import argparse
 import requests
 from io import BytesIO
 from zipfile import ZipFile
+import platform
+import re
+import subprocess
 
 import PyInstaller.__main__
 
-
 parser = argparse.ArgumentParser()
+# 保留 version 参数作为手动覆盖的备选项（防备某些没有 git 环境的机器）
 parser.add_argument(
-    "--version", type=str, help="Specify the version of autodori", default=None
-)
-parser.add_argument(
-    "--os",
-    type=str,
-    help="Specify the operating system on which the building is running",
-    default="none",
-)
-parser.add_argument(
-    "--arch",
-    type=str,
-    help="Specify the arch on which the building is running",
-    default="none",
+    "--version", type=str, help="Override the version manually (optional)", default=None
 )
 args = parser.parse_args()
-if args.version is None:
-    VERSION = "unknown"
-else:
+
+# ==================== 1. 自动获取版本号 (从 Git Commit) ====================
+if args.version:
     VERSION = args.version
-ZIP_FILENAME = f"autodori_{VERSION}_{args.os}_{args.arch}.zip"
+else:
+    VERSION = "unknown"
+    try:
+        # 获取最新的一次 commit message
+        commit_msg = subprocess.check_output(['git', 'log', '-1', '--pretty=%B'], text=True).strip()
+
+        # 使用正则匹配类似 "autodoriUI v0.1" 或 "autodoriUI v1.0.2" 的格式，提取 'v' 后面的内容
+        match = re.search(r'autodoriUI\s+(v[0-9\.]+)', commit_msg, re.IGNORECASE)
+        if match:
+            VERSION = match.group(1)
+            print(f"✅ Successfully extracted version from Git: {VERSION}")
+        else:
+            print(
+                f"⚠️ Warning: Could not find 'autodoriUI vX.X' format in commit message: '{commit_msg}'. Using 'unknown'.")
+    except Exception as e:
+        print(f"⚠️ Warning: Failed to get git commit (Is this a git repository?). Error: {e}")
+
+# ==================== 2. 自动获取操作系统和架构 ====================
+# 获取操作系统名 (windows, linux, darwin)
+os_name = platform.system().lower()
+if os_name == 'darwin':
+    os_name = 'macos'  # 将 darwin 转换为大家更习惯的 macos
+
+# 获取架构名 (amd64, x86_64, arm64 等)
+arch_name = platform.machine().lower()
+if arch_name in ['amd64', 'x86_64']:
+    arch_name = 'x64'  # 统一 x86_64 和 amd64 的叫法
+
+# ==================== 3. 生成最终的文件名 ====================
+ZIP_FILENAME = f"autodoriUI_{VERSION}_{os_name.capitalize()}_{arch_name.capitalize()}.zip"
+print(f"📦 Target Build Archive: {ZIP_FILENAME}")
 
 
 # 获取当前工作目录
@@ -126,11 +147,12 @@ if os.path.exists(dist_dir):
 
 # 运行 PyInstaller 打包命令
 command = [
-    "src/autodori.py",
+    "src/gui.py",
     "--onefile",
-    "--name=autodori.exe",
+    "--name=autodoriUI.exe",
     f"--add-data={add_data_param}",
     f"--add-data={add_data_param2}",
+    "--noconsole"
     # "--clean",
 ]
 if sys.platform == "win32":
@@ -159,14 +181,14 @@ if os.path.exists(ocr_model_path):
     shutil.rmtree(ocr_model_path)
 # 复制OCR模型
 shutil.copytree(
-    os.path.join(current_dir, "assets", "MaaCommonAssets", "OCR", "ppocr_v4", "zh_cn"),
+    os.path.join(current_dir, "assets", "MaaCommonAssets", "OCR", "ppocr_v3", "zh_cn"),
     ocr_model_path,
     ignore=lambda *_: ["README.md"],
     dirs_exist_ok=True,
 )
 shutil.copytree(
-    os.path.join(current_dir, "assets", "MaaCommonAssets", "OCR", "ppocr_v3", "ja_jp"),
-    os.path.join(ocr_model_path, "ppocr_v3", "ja_jp"),
+    os.path.join(current_dir, "assets", "MaaCommonAssets", "OCR", "ppocr_v5", "zh_cn"),
+    os.path.join(ocr_model_path, "ppocr_v5", "zh_cn"),
     ignore=lambda dirname, _: (
         ["misc", "MaaCommonAssets"] if os.path.basename(dirname) else []
     ),
