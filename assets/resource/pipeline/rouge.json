@@ -1,0 +1,89 @@
+{
+  "start_from_main_menu": {
+    "recognition": "OCR",
+    "expected": [
+      "游戏开始"
+    ],
+    "action": "Click",
+    "next": [
+      "confirm_start_game"
+    ]
+  },
+  "confirm_start_game": {
+    "recognition": "OCR",
+    "expected": [
+      "开始游戏"
+    ],
+    "action": "Click",
+    "next": [
+      "in_game_idle"
+    ]
+  },
+  "in_game_idle": {
+    "next": [
+      "handle_upgrades",
+      "handle_settlement",
+      "in_game_idle"
+    ]
+  },
+  "handle_upgrades": {
+    "recognition": "Custom",
+    "custom_recognition": "UIRecognizeLevelUp",
+    "next": [
+      "select_upgrade"
+    ]
+  },
+  "select_upgrade": {
+    "action": "Click",
+    "target": [
+      552,
+      185,
+      285,
+      26
+    ],
+    "next": [
+      "confirm_upgrade"
+    ]
+  },
+  "confirm_upgrade": {
+    "action": "Click",
+    "target": [
+      590,
+      640,
+      95,
+      20
+    ],
+    "next": [
+      "in_game_idle"
+    ]
+  },
+  "handle_settlement": {
+    "recognition": "OCR",
+    "roi": [
+      600,
+      500,
+      70,
+      40
+    ],
+    "expected": [
+      "Exit"
+    ],
+    "post_delay": 3000,
+    "next": [
+      "click_exit_button"
+    ]
+  },
+  "click_exit_button": {
+    "target": [
+      600,
+      500,
+      70,
+      40
+    ],
+    "action": "Click",
+    "post_delay": 3000,
+    "next": [
+      "start_from_main_menu"
+    ]
+  }
+}
