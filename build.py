@@ -21,7 +21,7 @@ if not args.version:
         match = re.search(r'autodoriUI\s+(v[0-9\.]+)', commit_msg, re.IGNORECASE)
         if match:
             VERSION = match.group(1)
-            print(f"✅ Successfully extracted version: {VERSION}")
+            print(f"Successfully extracted version: {VERSION}")
     except Exception:
         pass
 
@@ -30,7 +30,7 @@ os_name = 'macos' if os_name == 'darwin' else os_name
 arch_name = 'x64' if platform.machine().lower() in ['amd64', 'x86_64'] else platform.machine().lower()
 
 ZIP_FILENAME = f"autodoriUI_{VERSION}_{os_name.capitalize()}_{arch_name.capitalize()}.zip"
-print(f"📦 Target Build Archive: {ZIP_FILENAME}")
+print(f"Target Build Archive: {ZIP_FILENAME}")
 
 # ==================== 3. 寻找依赖路径 ====================
 current_dir = os.getcwd()
