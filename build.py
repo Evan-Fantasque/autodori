@@ -96,7 +96,7 @@ PyInstaller.__main__.run(command)
 # ==================== 5. 打包 Zip ====================
 zip_filepath = os.path.join(dist_dir, ZIP_FILENAME)
 
-with zipfile.ZipFile(zip_filepath, "w", zipfile.ZIP_DEFLATED) as zipf:
+with zipfile.ZipFile(zip_filepath, "w", zipfile.ZIP_LZMA) as zipf:
     # 1. 写入生成的 exe 文件
     for file in os.listdir(dist_dir):
         if file.endswith(".exe") and file != ZIP_FILENAME:
