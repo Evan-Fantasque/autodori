@@ -13,6 +13,7 @@ from tkinter import messagebox
 from tkinter import scrolledtext
 from tkinter import ttk
 
+import resource
 import autodori
 
 
@@ -742,25 +743,100 @@ class AutodoriGUI:
         self.master.destroy()
 
 
+# --- 资源加载窗口类 ---
+class ResourceSplash(tk.Toplevel):
+    def __init__(self, master, on_complete_callback):
+        super().__init__(master)
+        self.master = master
+        self.on_complete = on_complete_callback
+
+        self.title("正在检查必要资源...")
+        self.geometry("450x150")
+        self.resizable(False, False)
+        # 居中显示
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() // 2) - (450 // 2)
+        y = (self.winfo_screenheight() // 2) - (150 // 2)
+        self.geometry(f"+{x}+{y}")
+
+        # 拦截关闭按钮，防止下载中断
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # UI 控件
+        self.status_label = ttk.Label(self, text="正在初始化环境...", font=("", 10))
+        self.status_label.pack(pady=(30, 10))
+
+        self.progress = ttk.Progressbar(self, orient=tk.HORIZONTAL, length=350, mode='determinate')
+        self.progress.pack()
+
+        # 启动后台下载线程
+        threading.Thread(target=self._run_check, daemon=True).start()
+
+    def _on_close(self):
+        # 如果用户强制关闭加载窗，则退出整个程序
+        self.master.destroy()
+        sys.exit(0)
+
+    def _update_ui(self, text, percent):
+        """线程安全的UI更新"""
+        self.status_label.config(text=text)
+        if percent == -1:
+            # 无法获取总大小，进入来回弹跳的"忙碌"模式
+            if self.progress['mode'] != 'indeterminate':
+                self.progress.config(mode='indeterminate')
+                self.progress.start(10)
+        else:
+            if self.progress['mode'] != 'determinate':
+                self.progress.stop()
+                self.progress.config(mode='determinate')
+            self.progress['value'] = percent
+
+    def _run_check(self):
+        try:
+            # 使用 lambda 结合 master.after 确保跨线程更新 Tkinter UI 不会崩溃
+            update_callback = lambda text, percent: self.master.after(0, self._update_ui, text, percent)
+
+            # 调用我们在 resource.py 中写好的函数
+            resource.check_and_prepare_resources(progress_callback=update_callback)
+
+            # 等待 0.5 秒让用户看到"就绪"提示，然后触发完成回调
+            time.sleep(0.5)
+            self.master.after(0, self._finish)
+        except Exception as e:
+            def show_error():
+                messagebox.showerror("资源下载失败", f"无法下载或解压资源：\n{e}\n\n请检查网络连接后重启程序。")
+                self.master.destroy()
+                sys.exit(1)
+
+            self.master.after(0, show_error)
+
+    def _finish(self):
+        self.destroy()  # 销毁加载窗
+        self.on_complete()  # 呼出主界面
+
+
 # --- 程序入口 ---
 if __name__ == "__main__":
-    # 仅在Windows平台上执行此操作
     if sys.platform == 'win32':
-        # 创建一个 STARTUPINFO 对象，用于更精细地控制新进程的创建
         startupinfo = subprocess.STARTUPINFO()
-        # 设置 dwFlags 标志位，告诉系统我们要自己控制窗口的显示方式
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        # wShowWindow 标志位可以被设置为 SW_HIDE (值为0) 来彻底隐藏窗口
-        # 通常上面的 dwFlags 设置已经足够，但为了保险起见可以加上
-        # startupinfo.wShowWindow = 0 # 0 means SW_HIDE
-
-        # 使用 functools.partial 创建一个新的 Popen “版本”
-        # 这个新版本会自动将我们配置好的 startupinfo 作为默认参数传入
-        # 然后用这个新版本覆盖（“猴子补丁”）标准的 subprocess.Popen
-        # 这样，程序中所有（包括库里）对 subprocess.Popen 的调用都会自动应用我们的设置，从而隐藏窗口
         subprocess.Popen = partial(subprocess.Popen, startupinfo=startupinfo)
-    # --- 新增代码结束 ---
+
+    # 初始化一个隐藏的根窗口
     root = tk.Tk()
-    app = AutodoriGUI(root)
-    root.protocol("WM_DELETE_WINDOW", app.on_app_exit)
+    root.withdraw()
+
+
+    # 定义资源加载完成后的回调函数
+    def launch_main_gui():
+        # 显示主窗口并初始化主 GUI
+        root.deiconify()
+        app = AutodoriGUI(root)
+        root.protocol("WM_DELETE_WINDOW", app.on_app_exit)
+
+
+    # 唤起资源检查窗口
+    splash = ResourceSplash(root, on_complete_callback=launch_main_gui)
+
+    # 启动主事件循环
     root.mainloop()
