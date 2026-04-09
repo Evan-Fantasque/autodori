@@ -1,5 +1,5 @@
 import mumuipc
-import ldipc
+#import ldipc
 
 
 class Player:
@@ -10,8 +10,10 @@ class Player:
             self.player = mumuipc.MuMuPlayer(path, index, "v4")
         elif type_ == "mumuv5":
             self.player = mumuipc.MuMuPlayer(path, index, "v5")
+        """
         elif type_ == "ld":
             self.player = ldipc.LDPlayer(path, index)
+        """
 
     @property
     def resolution(self):
