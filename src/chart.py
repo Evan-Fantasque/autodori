@@ -247,8 +247,13 @@ class Chart:
             note_type = note_data["type"]
             note_index = note_data.get("index", None)
 
+            time_offset = 0
+            if humanize:
+                time_offset = random.gauss(0, 15)
+                time_offset = max(-30.0, min(70.0, time_offset))
+
             if note_type == "Single":
-                time_ = note_data["time"]
+                time_ = note_data["time"] + time_offset
                 from_lane = note_data["lane"]
                 pos = get_lane_position(from_lane)
 
@@ -349,58 +354,6 @@ class Chart:
         actions: list[dict]
 
         actions_with_wait: list[dict] = []
-        if humanize:
-            # =================== “分而治之”参数配置 ===================
-            # 1. 定义不同打击倾向的“占比” (三者相加建议为 1.0)
-            EARLY_HIT_PROBABILITY = 0.03  # “抢拍”
-            LATE_HIT_PROBABILITY = 0.03  # “拖拍”
-
-            # 2. 定义不同倾向的“偏移范围” (毫秒), 基于 Perfect 区间 (-33ms, +50ms)
-            EARLY_HIT_RANGE_MS = (-26, -22)  # 抢拍范围
-            LATE_HIT_RANGE_MS = (26, 32)  # 拖拍范围
-
-            # 3. 按键的微小随机持续时长
-            TINY_DURATION_RANGE_MS = (20, 30)
-            # ==========================================================
-
-            note_map = {note.get('index'): note for note in self._chart_data if note.get('index') is not None}
-            note_down_times = {}
-
-            for action in actions:
-                note_index = action.get('note')
-                original_note = note_map.get(note_index)
-
-                if (original_note and
-                        original_note.get('type') == 'Single' and
-                        not original_note.get('flick', False)):
-
-                    if action['type'] == 'down':
-                        # --- 核心决策逻辑 ---
-                        dice_roll = random.random()
-
-                        if dice_roll < EARLY_HIT_PROBABILITY:
-                            # 判定为“抢拍型”
-                            random_jitter = -20
-                        elif dice_roll < EARLY_HIT_PROBABILITY + LATE_HIT_PROBABILITY:
-                            # 判定为“拖拍型”
-                            random_jitter = 20
-                        else:
-                            # 判定为“标准型”
-                            random_jitter = 0
-
-                        new_down_time = action['time'] + random_jitter
-                        action['time'] = new_down_time
-                        note_down_times[note_index] = new_down_time
-
-                    elif action['type'] == 'up':
-                        if note_index in note_down_times:
-                            down_time = note_down_times[note_index]
-                            action['time'] = down_time
-
-        # 随机化后需要重新排序 (此部分代码保持不变)
-        actions.sort(key=lambda x: x["time"])
-
-        # 根据最终带有偏移的时间，重新计算等待间隔 (此部分代码保持不变)
         for i, action in enumerate(actions):
             actions_with_wait.append(action)
             if i != len(actions) - 1:
