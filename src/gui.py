@@ -148,7 +148,7 @@ class AutodoriGUI:
         usage_frame = ttk.LabelFrame(self.disclaimer_frame, text="使用方法", padding="10")
         usage_frame.pack(fill=tk.X, pady=10)
         usage_text = (
-            "模拟器分辨率请设置为1280x720。\n"
+            "仅支持MuMu模拟器V5，分辨率请设置为1280x720以提高性能。\n"
             "歌曲难度请手动设置为与游戏中一致。\n"
             "自由演出——单曲模式：启动任务前，请手动进入自由演出模式下的「选择乐队」界面。\n"
             "自由演出——自动模式：启动任务前，请手动进入自由演出模式下的「选择乐队」界面。\n"
@@ -160,7 +160,7 @@ class AutodoriGUI:
         warning_frame = ttk.LabelFrame(self.disclaimer_frame, text="风险提示", padding="10")
         warning_frame.pack(fill=tk.X, pady=10)
         warning_text = (
-            "本程序仅于自由演出、巡回演出模式下进行开发与测试，不可用于协力模式。\n"
+            "本程序仅于自由演出、巡回演出模式下进行开发与测试，切勿用于协力模式。\n"
             "程序运行期间，建议您时刻关注模拟器界面。若出现任何异常情况，请立即手动停止任务。\n"
             "使用本程序可能违反游戏的用户协议，您将自行承担一切潜在风险。开发者对由此产生的任何后果概不负责。"
         )
