@@ -249,8 +249,8 @@ class Chart:
 
             time_offset = 0
             if humanize:
-                time_offset = random.gauss(0, 15)
-                time_offset = max(-30.0, min(70.0, time_offset))
+                time_offset = random.gauss(0, 10)
+                time_offset = max(-20.0, min(60.0, time_offset))
 
             if note_type == "Single":
                 time_ = note_data["time"] + time_offset

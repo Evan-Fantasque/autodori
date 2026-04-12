@@ -489,29 +489,6 @@ class SaveSong(CustomAction):
         return CustomAction.RunResult(True)
 
 
-@maaresource.custom_recognition("RecognizeLevelUp")
-class RecognizeLevelUp(CustomRecognition):
-    def analyze(self, context: Context, argv: CustomRecognition.AnalyzeArg):
-        roi = [590, 640, 100, 30]
-        target_text = "LevelUP!"
-        confidence_threshold = 85
-
-        try:
-            pipeline = {"_ocr_levelup": {"recognition": "OCR", "roi": roi, "only_rec": True}}
-            ocr_text = context.run_recognition("_ocr_levelup", argv.image, pipeline).best_result.text
-
-            match = fzwzprocess.extractOne(ocr_text, [target_text])
-
-            if match and match[1] >= confidence_threshold:
-                return self.AnalyzeResult(roi, target_text)
-            else:
-                score = match[1] if match else 0
-                return self.AnalyzeResult(None, "")
-
-        except Exception as e:
-            return self.AnalyzeResult(None, "")
-
-
 def fuzzy_match_song(name):
     return fzwzprocess.extractOne(name, list(all_song_name_indexes.keys()))
 
@@ -560,6 +537,7 @@ def save_song(name):
 
 
 def play_song(stop_event, playback_started_event):
+
     logging.info("Start play")
     cmd_log_list.clear()
     reset_callback_data()
@@ -716,9 +694,9 @@ def init_maa():
     _device: list[AdbDevice] = []
     for device in adb_devices:
         extra_names = device.config.get("extras", {}).keys()
-        if "mumu" in extra_names:
+        if "mumu" in extra_names or "ld" in extra_names:
             if (device.name, device.address) not in [
-                (x.name, x.address) for x in _device
+                (d.name, d.address) for d in _device
             ]:
                 _device.append(device)
 
@@ -826,12 +804,13 @@ def init_player_and_mnt():
     if "mumu" in extra_config.keys():
         extra_config = extra_config["mumu"]
         type_ = "mumu"
-        """
         if device.name == "MuMuPlayer12":
             type_ += "v4"
-        """
         if device.name == "MuMuPlayer12 v5":
             type_ += "v5"
+    elif "ld" in extra_config.keys():
+        extra_config = extra_config["ld"]
+        type_ = "ld"
     else:
         raise RuntimeError(f"Unsupported emulator type: {list(extra_config.keys())}")
 

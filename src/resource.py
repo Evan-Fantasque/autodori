@@ -4,6 +4,7 @@ import shutil
 import requests
 from io import BytesIO
 from zipfile import ZipFile
+from pathlib import Path
 
 
 def get_base_dir():
@@ -11,7 +12,7 @@ def get_base_dir():
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
     else:
-        return os.getcwd()
+        return Path(__file__).parent.parent
 
 
 def get_meipass_dir():
@@ -19,7 +20,7 @@ def get_meipass_dir():
     if getattr(sys, 'frozen', False):
         return sys._MEIPASS
     else:
-        return os.getcwd()
+        return Path(__file__).parent.parent
 
 
 def release_bundled_assets(progress_callback=None):
